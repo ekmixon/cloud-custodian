@@ -56,6 +56,8 @@ be applies for all resources.
 
    group-codecommit.rst
 
+   group-codedeploy.rst
+
    group-codepipeline.rst
 
    group-cognito-identity.rst
@@ -106,6 +108,8 @@ be applies for all resources.
 
    group-firehose.rst
 
+   group-fis.rst
+
    group-fsx.rst
 
    group-gamelift.rst
@@ -126,6 +130,8 @@ be applies for all resources.
 
    group-kinesisanalytics.rst
 
+   group-kinesisanalyticsv2.rst
+
    group-kinesisvideo.rst
 
    group-kms.rst
@@ -139,6 +145,8 @@ be applies for all resources.
    group-machinelearning.rst
 
    group-mq.rst
+
+   group-mwaa.rst
 
    group-network-firewall.rst
 
@@ -158,6 +166,8 @@ be applies for all resources.
 
    group-s3.rst
 
+   group-s3control.rst
+
    group-sagemaker.rst
 
    group-sdb.rst
@@ -165,6 +175,8 @@ be applies for all resources.
    group-secretsmanager.rst
 
    group-serverlessrepo.rst
+
+   group-service-quotas.rst
 
    group-servicecatalog.rst
 
@@ -184,8 +196,12 @@ be applies for all resources.
 
    group-support.rst
 
+   group-swf.rst
+
    group-waf.rst
 
    group-waf-regional.rst
+
+   group-wafv2.rst
 
    group-workspaces.rst

@@ -20,6 +20,8 @@ Filters
 
   - :ref:`check-macie <aws.account.filters.check-macie>`
 
+  - :ref:`config-compliance <aws.common.filters.config-compliance>`
+  
   - :ref:`credential <aws.account.filters.credential>`
 
   - :ref:`default-ebs-encryption <aws.account.filters.default-ebs-encryption>`

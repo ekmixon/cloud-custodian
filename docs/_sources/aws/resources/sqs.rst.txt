@@ -16,6 +16,8 @@ Filters
   
   - :ref:`cross-account <aws.sqs.filters.cross-account>`
 
+  - :ref:`dead-letter <aws.sqs.filters.dead-letter>`
+
   - :ref:`event <aws.common.filters.event>`
   
   - :ref:`finding <aws.common.filters.finding>`
@@ -173,6 +175,43 @@ Filter SQS queues which have cross account permissions
 
 
 Permissions - sqs:GetQueueAttributes
+
+
+.. _aws.sqs.filters.dead-letter:
+
+dead-letter
++++++++++++
+Filter for sqs queues that are dead letter queues
+
+:example:
+
+.. code-block:: yaml
+
+    policies:
+     - name: find-dead-letter-queues
+       resource: aws.sqs
+       filters:
+         - type: dead-letter
+
+.. container:: toggle
+
+  
+
+  .. raw:: html
+     
+    <div class="header docutils container" style=""></div>
+
+  .. code-block:: yaml
+
+    properties:
+      type:
+        enum:
+        - dead-letter
+    required:
+    - type
+
+
+
 
 
 .. _aws.sqs.filters.json-diff:
