@@ -56,11 +56,11 @@ azure-mgmt-subscription==1.0.0
 azure-mgmt-trafficmanager==0.51.0
 azure-mgmt-web==2.0.0
 azure-nspkg==3.0.2
-azure-storage-blob==12.12.0; python_version >= "3.6"
+azure-storage-blob==12.13.0; python_version >= "3.6"
 azure-storage-common==2.1.0
 azure-storage-file-share==12.8.0; python_version >= "3.6"
 azure-storage-file==2.1.0
-azure-storage-queue==12.3.0; python_version >= "3.6"
+azure-storage-queue==12.4.0; python_version >= "3.6"
 backports.zoneinfo==0.2.1; python_version >= "3.6" and python_full_version < "3.0.0" and python_version < "3.9" and (python_version >= "3.6" and python_full_version < "3.0.0" or python_full_version >= "3.6.0" and python_version < "4" and python_version >= "3.6") or python_full_version >= "3.5.0" and python_version < "3.9" and python_version >= "3.6" and (python_version >= "3.6" and python_full_version < "3.0.0" or python_full_version >= "3.6.0" and python_version < "4" and python_version >= "3.6")
 certifi==2022.6.15; python_version >= "3.7" and python_version < "4"
 cffi==1.15.0; python_version >= "3.6"
