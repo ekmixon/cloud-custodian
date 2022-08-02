@@ -101,8 +101,10 @@ class ConfigBuild(ConfigSource):
             item_config['vpcConfig']['subnets'] = [
                 s['subnet'] for s in item_config['vpcConfig']['subnets']]
 
-        item_config['arn'] = 'arn:aws:codebuild:{}:{}:project/{}'.format(
-            self.manager.config.region, self.manager.config.account_id, item_config['name'])
+        item_config[
+            'arn'
+        ] = f"arn:aws:codebuild:{self.manager.config.region}:{self.manager.config.account_id}:project/{item_config['name']}"
+
         return item_config
 
 
@@ -380,10 +382,12 @@ class CodeDeployDeploymentGroup(ChildResourceManager):
     }
 
     def get_arns(self, resources):
-        arns = []
-        for r in resources:
-            arns.append(self.generate_arn(r['applicationName'] + '/' + r['deploymentGroupName']))
-        return arns
+        return [
+            self.generate_arn(
+                r['applicationName'] + '/' + r['deploymentGroupName']
+            )
+            for r in resources
+        ]
 
 
 @CodeDeployDeploymentGroup.action_registry.register('delete')

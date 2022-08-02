@@ -344,8 +344,9 @@ class VersionTrim(Action):
             fmatched, ftotal = self.process_lambda(client, r)
             matched += fmatched
             total += ftotal
-        self.log.info('trim-versions cleaned %s of %s lambda storage' % (
-            get_human_size(matched), get_human_size(total)))
+        self.log.info(
+            f'trim-versions cleaned {get_human_size(matched)} of {get_human_size(total)} lambda storage'
+        )
 
     def get_aliased_versions(self, client, r):
         aliases_pager = client.get_paginator('list_aliases')
@@ -353,11 +354,10 @@ class VersionTrim(Action):
         aliases = aliases_pager.paginate(
             FunctionName=r['FunctionName']).build_full_result().get('Aliases')
 
-        aliased_versions = set()
-        for a in aliases:
-            aliased_versions.add("%s:%s" % (
-                a['AliasArn'].rsplit(':', 1)[0], a['FunctionVersion']))
-        return aliased_versions
+        return {
+            f"{a['AliasArn'].rsplit(':', 1)[0]}:{a['FunctionVersion']}"
+            for a in aliases
+        }
 
     def process_lambda(self, client, r):
         exclude_aliases = self.data.get('exclude-aliases', True)
@@ -488,7 +488,7 @@ class SetConcurrency(Action):
 
     def validate(self):
         if self.data.get('expr', False) and not isinstance(self.data['value'], str):
-            raise ValueError("invalid value expression %s" % self.data['value'])
+            raise ValueError(f"invalid value expression {self.data['value']}")
         return self
 
     def process(self, functions):
@@ -506,7 +506,7 @@ class SetConcurrency(Action):
                 fvalue = value.search(function)
                 if isinstance(fvalue, float):
                     fvalue = int(fvalue)
-                if isinstance(value, int) or isinstance(value, none_type):
+                if isinstance(value, (int, none_type)):
                     self.policy.log.warning(
                         "Function: %s Invalid expression value for concurrency: %s",
                         function['FunctionName'], fvalue)

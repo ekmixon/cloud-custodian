@@ -46,9 +46,9 @@ class URIResolver:
         if response.info().get('Content-Encoding') != 'gzip':
             return response.read().decode('utf-8')
 
-        data = zlib.decompress(response.read(),
-                               ZIP_OR_GZIP_HEADER_DETECT).decode('utf8')
-        return data
+        return zlib.decompress(response.read(), ZIP_OR_GZIP_HEADER_DETECT).decode(
+            'utf8'
+        )
 
     def get_s3_uri(self, uri):
         parsed = urlparse(uri)
@@ -57,13 +57,10 @@ class URIResolver:
             Bucket=parsed.netloc,
             Key=parsed.path[1:])
         if parsed.query:
-            params.update(dict(parse_qsl(parsed.query)))
+            params |= dict(parse_qsl(parsed.query))
         result = client.get_object(**params)
         body = result['Body'].read()
-        if isinstance(body, str):
-            return body
-        else:
-            return body.decode('utf-8')
+        return body if isinstance(body, str) else body.decode('utf-8')
 
 
 class ValuesFrom:
@@ -160,30 +157,23 @@ class ValuesFrom:
 
         if format == 'json':
             data = json.loads(contents)
-            if 'expr' in self.data:
-                return self._get_resource_values(data)
-            else:
-                return data
-        elif format == 'csv' or format == 'csv2dict':
+            return self._get_resource_values(data) if 'expr' in self.data else data
+        elif format in ['csv', 'csv2dict']:
             data = csv.reader(io.StringIO(contents))
             if format == 'csv2dict':
                 data = {x[0]: list(x[1:]) for x in zip(*data)}
                 if 'expr' in self.data:
                     return self._get_resource_values(data)
-                else:
-                    combined_data = set(itertools.chain.from_iterable(data.values()))
-                    return combined_data
+                return set(itertools.chain.from_iterable(data.values()))
             else:
                 if isinstance(self.data.get('expr'), int):
-                    return set([d[self.data['expr']] for d in data])
+                    return {d[self.data['expr']] for d in data}
                 data = list(data)
                 if 'expr' in self.data:
                     return self._get_resource_values(data)
-                else:
-                    combined_data = set(itertools.chain.from_iterable(data))
-                    return combined_data
+                return set(itertools.chain.from_iterable(data))
         elif format == 'txt':
-            return set([s.strip() for s in io.StringIO(contents).readlines()])
+            return {s.strip() for s in io.StringIO(contents).readlines()}
 
     def _get_resource_values(self, data):
         res = jmespath.search(self.data['expr'], data)

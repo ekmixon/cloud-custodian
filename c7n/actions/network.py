@@ -109,9 +109,7 @@ class ModifyVpcSecurityGroupsAction(Action):
 
     def _get_array(self, k):
         v = self.data.get(k, [])
-        if isinstance(v, (str, bytes)):
-            return [v]
-        return v
+        return [v] if isinstance(v, (str, bytes)) else v
 
     def get_groups_by_names(self, names):
         """Resolve security names to security groups resources."""
@@ -202,7 +200,7 @@ class ModifyVpcSecurityGroupsAction(Action):
         resolved_groups = self.get_groups_by_names(self.get_action_group_names())
         return_groups = []
 
-        for idx, r in enumerate(resources):
+        for r in resources:
             rgroups = self.sg_expr.search(r) or []
             add_groups = self.resolve_group_names(
                 r, self._get_array('add'), resolved_groups)

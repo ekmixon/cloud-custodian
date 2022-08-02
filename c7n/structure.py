@@ -29,21 +29,21 @@ class StructureParser:
                     type(data).__name__))
         dkeys = set(data.keys())
 
-        extra = dkeys.difference(self.allowed_file_keys)
-        if extra:
-            raise PolicyValidationError((
-                'Policy files top level keys are %s, found extra: %s' % (
-                    ', '.join(self.allowed_file_keys),
-                    ', '.join(extra))))
+        if extra := dkeys.difference(self.allowed_file_keys):
+            raise PolicyValidationError(
+                f"Policy files top level keys are {', '.join(self.allowed_file_keys)}, found extra: {', '.join(extra)}"
+            )
+
 
         if 'policies' not in data:
             raise PolicyValidationError("`policies` list missing")
 
         pdata = data.get('policies', [])
         if not isinstance(pdata, list):
-            raise PolicyValidationError((
-                '`policies` key should be an array/list found: %s' % (
-                    type(pdata).__name__)))
+            raise PolicyValidationError(
+                f'`policies` key should be an array/list found: {type(pdata).__name__}'
+            )
+
         for p in pdata:
             self.validate_policy(p)
 
@@ -59,33 +59,37 @@ class StructureParser:
                     json.dumps(p, indent=2)))
         if pkeys.difference(self.allowed_policy_keys):
             raise PolicyValidationError(
-                'policy:%s has unknown keys: %s' % (
-                    p['name'], ','.join(pkeys.difference(self.allowed_policy_keys))))
+                f"policy:{p['name']} has unknown keys: {','.join(pkeys.difference(self.allowed_policy_keys))}"
+            )
+
         if not isinstance(p.get('filters', []), (list, type(None))):
-            raise PolicyValidationError((
-                'policy:%s must use a list for filters found:%s' % (
-                    p['name'], type(p['filters']).__name__)))
+            raise PolicyValidationError(
+                f"policy:{p['name']} must use a list for filters found:{type(p['filters']).__name__}"
+            )
+
         element_types = (dict, str)
         for f in p.get('filters', ()):
             if not isinstance(f, element_types):
-                raise PolicyValidationError((
-                    'policy:%s filter must be a mapping/dict found:%s' % (
-                        p.get('name', 'unknown'), type(f).__name__)))
+                raise PolicyValidationError(
+                    f"policy:{p.get('name', 'unknown')} filter must be a mapping/dict found:{type(f).__name__}"
+                )
+
         if not isinstance(p.get('actions', []), (list, type(None))):
-            raise PolicyValidationError((
-                'policy:%s must use a list for actions found:%s' % (
-                    p.get('name', 'unknown'), type(p['actions']).__name__)))
+            raise PolicyValidationError(
+                f"policy:{p.get('name', 'unknown')} must use a list for actions found:{type(p['actions']).__name__}"
+            )
+
         for a in p.get('actions', ()):
             if not isinstance(a, element_types):
-                raise PolicyValidationError((
-                    'policy:%s action must be a mapping/dict found:%s' % (
-                        p.get('name', 'unknown'), type(a).__name__)))
+                raise PolicyValidationError(
+                    f"policy:{p.get('name', 'unknown')} action must be a mapping/dict found:{type(a).__name__}"
+                )
 
     def get_resource_types(self, data):
         resources = set()
         for p in data.get('policies', []):
             rtype = p['resource']
             if '.' not in rtype:
-                rtype = 'aws.%s' % rtype
+                rtype = f'aws.{rtype}'
             resources.add(rtype)
         return resources

@@ -71,7 +71,7 @@ class ResourceQuery:
             m.service, resource_manager.config.region)
         enum_op, path, extra_args = m.enum_spec
         if extra_args:
-            params.update(extra_args)
+            params |= extra_args
         return self._invoke_client_enum(
             client, enum_op, params, path,
             getattr(resource_manager, 'retry', None)) or []
@@ -127,7 +127,7 @@ class ChildResourceQuery(ResourceQuery):
 
         enum_op, path, extra_args = m.enum_spec
         if extra_args:
-            params.update(extra_args)
+            params |= extra_args
 
         parent_type, parent_key, annotate_parent = m.parent_spec
         parents = self.manager.get_resource_manager(parent_type)
@@ -174,11 +174,9 @@ class QueryMeta(type):
             return super(QueryMeta, cls).__new__(cls, name, parents, attrs)
 
         if 'filter_registry' not in attrs:
-            attrs['filter_registry'] = FilterRegistry(
-                '%s.filters' % name.lower())
+            attrs['filter_registry'] = FilterRegistry(f'{name.lower()}.filters')
         if 'action_registry' not in attrs:
-            attrs['action_registry'] = ActionRegistry(
-                '%s.actions' % name.lower())
+            attrs['action_registry'] = ActionRegistry(f'{name.lower()}.actions')
 
         if attrs['resource_type']:
             m = ResourceQuery.resolve(attrs['resource_type'])
@@ -186,11 +184,9 @@ class QueryMeta(type):
             if m.dimension:
                 attrs['filter_registry'].register('metrics', MetricsFilter)
             # EC2 Service boilerplate ...
-            if m.service == 'ec2':
-                # Generic ec2 resource tag support
-                if getattr(m, 'taggable', True):
-                    register_ec2_tags(
-                        attrs['filter_registry'], attrs['action_registry'])
+            if m.service == 'ec2' and getattr(m, 'taggable', True):
+                register_ec2_tags(
+                    attrs['filter_registry'], attrs['action_registry'])
             if getattr(m, 'universal_taggable', False):
                 compatibility = isinstance(m.universal_taggable, bool) and True or False
                 register_universal_tags(
@@ -234,14 +230,14 @@ class DescribeSource:
         if m.permissions_enum:
             perms = list(m.permissions_enum)
         else:
-            perms = ['%s:%s' % (prefix, _napi(m.enum_spec[0]))]
+            perms = [f'{prefix}:{_napi(m.enum_spec[0])}']
         if m.permissions_augment:
             perms.extend(m.permissions_augment)
         else:
             if getattr(m, 'detail_spec', None):
-                perms.append("%s:%s" % (prefix, _napi(m.detail_spec[0])))
+                perms.append(f"{prefix}:{_napi(m.detail_spec[0])}")
             if getattr(m, 'batch_detail_spec', None):
-                perms.append("%s:%s" % (prefix, _napi(m.batch_detail_spec[0])))
+                perms.append(f"{prefix}:{_napi(m.batch_detail_spec[0])}")
         return perms
 
     def augment(self, resources):
@@ -291,14 +287,13 @@ class ConfigSource:
         results = []
         m = self.manager.get_model()
         for i in ids:
-            revisions = self.retry(
+            if revisions := self.retry(
                 client.get_resource_config_history,
                 resourceId=i,
                 resourceType=m.config_type,
-                limit=1).get('configurationItems')
-            if not revisions:
-                continue
-            results.append(self.load_resource(revisions[0]))
+                limit=1,
+            ).get('configurationItems'):
+                results.append(self.load_resource(revisions[0]))
         return list(filter(None, results))
 
     def get_query_params(self, query):
@@ -314,11 +309,10 @@ class ConfigSource:
         must have resourceType qualifier.
         """
         if query and not isinstance(query, dict):
-            raise PolicyExecutionError("invalid config source query %s" % (query,))
+            raise PolicyExecutionError(f"invalid config source query {query}")
 
         if query is None and 'query' in self.manager.data:
-            _q = [q for q in self.manager.data['query'] if 'expr' in q]
-            if _q:
+            if _q := [q for q in self.manager.data['query'] if 'expr' in q]:
                 query = _q.pop()
 
         if query is None and 'query' in self.manager.data:
@@ -330,11 +324,11 @@ class ConfigSource:
         else:
             _c = None
 
-        s = ("select resourceId, configuration, supplementaryConfiguration "
-             "where resourceType = '{}'").format(self.manager.resource_type.config_type)
+        s = f"select resourceId, configuration, supplementaryConfiguration where resourceType = '{self.manager.resource_type.config_type}'"
+
 
         if _c:
-            s += "AND {}".format(_c)
+            s += f"AND {_c}"
 
         return {'expr': s}
 
@@ -346,11 +340,11 @@ class ConfigSource:
         return resource
 
     def _load_item_config(self, item):
-        if isinstance(item['configuration'], str):
-            item_config = json.loads(item['configuration'])
-        else:
-            item_config = item['configuration']
-        return item_config
+        return (
+            json.loads(item['configuration'])
+            if isinstance(item['configuration'], str)
+            else item['configuration']
+        )
 
     def _load_resource_tags(self, resource, item):
         # normalized tag loading across the many variants of config's inconsistencies.
@@ -391,8 +385,7 @@ class ConfigSource:
                 self.manager.__class__.__name__.lower())
 
             for resource_set in chunks(resource_ids, 50):
-                futures = []
-                futures.append(w.submit(self.get_resources, resource_set))
+                futures = [w.submit(self.get_resources, resource_set)]
                 for f in as_completed(futures):
                     if f.exception():
                         self.manager.log.error(
@@ -464,7 +457,7 @@ class QueryResourceManager(ResourceManager, metaclass=QueryMeta):
             return self.source_mapping.get(source_type)(self)
         if source_type in sources:
             return sources[source_type](self)
-        raise KeyError("Invalid Source %s" % source_type)
+        raise KeyError(f"Invalid Source {source_type}")
 
     @classmethod
     def has_arn(cls):
@@ -511,10 +504,16 @@ class QueryResourceManager(ResourceManager, metaclass=QueryMeta):
         if self._cache.load():
             resources = self._cache.get(cache_key)
             if resources is not None:
-                self.log.debug("Using cached %s: %d" % (
-                    "%s.%s" % (self.__class__.__module__,
-                               self.__class__.__name__),
-                    len(resources)))
+                self.log.debug(
+                    (
+                        "Using cached %s: %d"
+                        % (
+                            f"{self.__class__.__module__}.{self.__class__.__name__}",
+                            len(resources),
+                        )
+                    )
+                )
+
 
         if resources is None:
             if query is None:
@@ -570,7 +569,7 @@ class QueryResourceManager(ResourceManager, metaclass=QueryMeta):
                 resources = self.augment(resources)
             return resources
         except ClientError as e:
-            self.log.warning("event ids not resolved: %s error:%s" % (ids, e))
+            self.log.warning(f"event ids not resolved: {ids} error:{e}")
             return []
 
     def augment(self, resources):
@@ -603,7 +602,7 @@ class QueryResourceManager(ResourceManager, metaclass=QueryMeta):
         m = self.get_model()
         arn_key = getattr(m, 'arn', None)
         if arn_key is False:
-            raise ValueError("%s do not have arns" % self.type)
+            raise ValueError(f"{self.type} do not have arns")
 
         id_key = m.id
 
@@ -662,28 +661,36 @@ class MaxResourceLimit:
             self.percentage_amount = self.population_count * (self.percent / 100.0)
 
     def check_resource_limits(self):
-        if self.percentage_amount and self.amount:
-            if (self.selection_count > self.amount and
-               self.selection_count > self.percentage_amount and self.op == "and"):
-                raise ResourceLimitExceeded(
-                    ("policy:%s exceeded resource-limit:{limit} and percentage-limit:%s%% "
-                     "found:{selection_count} total:{population_count}")
-                    % (self.p.name, self.percent), "max-resource and max-percent",
-                    self.amount, self.selection_count, self.population_count)
+        if (
+            self.percentage_amount
+            and self.amount
+            and (
+                self.selection_count > self.amount
+                and self.selection_count > self.percentage_amount
+                and self.op == "and"
+            )
+        ):
+            raise ResourceLimitExceeded(
+                ("policy:%s exceeded resource-limit:{limit} and percentage-limit:%s%% "
+                 "found:{selection_count} total:{population_count}")
+                % (self.p.name, self.percent), "max-resource and max-percent",
+                self.amount, self.selection_count, self.population_count)
 
-        if self.amount:
-            if self.selection_count > self.amount and self.op != "and":
-                raise ResourceLimitExceeded(
-                    ("policy:%s exceeded resource-limit:{limit} "
-                     "found:{selection_count} total: {population_count}") % self.p.name,
-                    "max-resource", self.amount, self.selection_count, self.population_count)
+        if self.amount and self.selection_count > self.amount and self.op != "and":
+            raise ResourceLimitExceeded(
+                ("policy:%s exceeded resource-limit:{limit} "
+                 "found:{selection_count} total: {population_count}") % self.p.name,
+                "max-resource", self.amount, self.selection_count, self.population_count)
 
-        if self.percentage_amount:
-            if self.selection_count > self.percentage_amount and self.op != "and":
-                raise ResourceLimitExceeded(
-                    ("policy:%s exceeded resource-limit:{limit}%% "
-                     "found:{selection_count} total:{population_count}") % self.p.name,
-                    "max-percent", self.percent, self.selection_count, self.population_count)
+        if (
+            self.percentage_amount
+            and self.selection_count > self.percentage_amount
+            and self.op != "and"
+        ):
+            raise ResourceLimitExceeded(
+                ("policy:%s exceeded resource-limit:{limit}%% "
+                 "found:{selection_count} total:{population_count}") % self.p.name,
+                "max-percent", self.percent, self.selection_count, self.population_count)
 
 
 class ChildResourceManager(QueryResourceManager):
@@ -713,7 +720,7 @@ def _batch_augment(manager, model, detail_spec, resource_set):
         args = ()
     kw = {param_name: [param_key and r[param_key] or r for r in resource_set]}
     if detail_args:
-        kw.update(detail_args)
+        kw |= detail_args
     response = op(*args, **kw)
     return response[detail_path]
 
@@ -755,20 +762,20 @@ class RetryPageIterator(PageIterator):
 
 class TypeMeta(type):
 
-    def __repr__(cls):
-        if cls.config_type:
-            identifier = cls.config_type
-        elif cls.cfn_type:
-            identifier = cls.cfn_type
-        elif cls.arn_type and cls.service:
-            identifier = "AWS::%s::%s" % (cls.service.title(), cls.arn_type.title())
-        elif cls.enum_spec and cls.service:
-            identifier = "AWS::%s::%s" % (cls.service.title(), cls.enum_spec[1])
-        elif cls.service:
-            identifier = "AWS::%s::%s" % (cls.service.title(), cls.id)
+    def __repr__(self):
+        if self.config_type:
+            identifier = self.config_type
+        elif self.cfn_type:
+            identifier = self.cfn_type
+        elif self.arn_type and self.service:
+            identifier = f"AWS::{self.service.title()}::{self.arn_type.title()}"
+        elif self.enum_spec and self.service:
+            identifier = f"AWS::{self.service.title()}::{self.enum_spec[1]}"
+        elif self.service:
+            identifier = f"AWS::{self.service.title()}::{self.id}"
         else:
-            identifier = cls.__name__
-        return "<TypeInfo %s>" % identifier
+            identifier = self.__name__
+        return f"<TypeInfo {identifier}>"
 
 
 class TypeInfo(metaclass=TypeMeta):

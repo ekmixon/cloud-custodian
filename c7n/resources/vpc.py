@@ -151,12 +151,14 @@ class FlowLogFilter(Filter):
                                 dest_type_match and delivery_status_match)
                     fl_matches.append(fl_match)
 
-                if set_op == 'or':
-                    if any(fl_matches):
-                        results.append(r)
-                elif set_op == 'and':
-                    if all(fl_matches):
-                        results.append(r)
+                if (
+                    set_op == 'and'
+                    and all(fl_matches)
+                    or set_op != 'and'
+                    and set_op == 'or'
+                    and any(fl_matches)
+                ):
+                    results.append(r)
 
         return results
 
@@ -187,12 +189,13 @@ class VpcSecurityGroupFilter(RelatedResourceFilter):
 
     def get_related_ids(self, resources):
         vpc_ids = [vpc['VpcId'] for vpc in resources]
-        vpc_group_ids = {
-            g['GroupId'] for g in
-            self.manager.get_resource_manager('security-group').resources()
+        return {
+            g['GroupId']
+            for g in self.manager.get_resource_manager(
+                'security-group'
+            ).resources()
             if g.get('VpcId', '') in vpc_ids
         }
-        return vpc_group_ids
 
 
 @Vpc.filter_registry.register('subnet')
@@ -221,12 +224,11 @@ class VpcSubnetFilter(RelatedResourceFilter):
 
     def get_related_ids(self, resources):
         vpc_ids = [vpc['VpcId'] for vpc in resources]
-        vpc_subnet_ids = {
-            g['SubnetId'] for g in
-            self.manager.get_resource_manager('subnet').resources()
+        return {
+            g['SubnetId']
+            for g in self.manager.get_resource_manager('subnet').resources()
             if g.get('VpcId', '') in vpc_ids
         }
-        return vpc_subnet_ids
 
 
 @Vpc.filter_registry.register('nat-gateway')
@@ -255,12 +257,11 @@ class VpcNatGatewayFilter(RelatedResourceFilter):
 
     def get_related_ids(self, resources):
         vpc_ids = [vpc['VpcId'] for vpc in resources]
-        vpc_natgw_ids = {
-            g['NatGatewayId'] for g in
-            self.manager.get_resource_manager('nat-gateway').resources()
+        return {
+            g['NatGatewayId']
+            for g in self.manager.get_resource_manager('nat-gateway').resources()
             if g.get('VpcId', '') in vpc_ids
         }
-        return vpc_natgw_ids
 
 
 @Vpc.filter_registry.register('internet-gateway')
@@ -335,15 +336,20 @@ class AttributesFilter(Filter):
                     VpcId=r['VpcId'],
                     Attribute='enableDnsSupport'
                 )['EnableDnsSupport']['Value']
-            if dns_hostname is not None and dns_support is not None:
-                if dns_hostname == hostname and dns_support == support:
-                    results.append(r)
-            elif dns_hostname is not None and dns_support is None:
-                if dns_hostname == hostname:
-                    results.append(r)
-            elif dns_support is not None and dns_hostname is None:
-                if dns_support == support:
-                    results.append(r)
+            if (
+                dns_hostname is not None
+                and dns_support is not None
+                and dns_hostname == hostname
+                and dns_support == support
+                or (dns_hostname is None or dns_support is None)
+                and dns_hostname is not None
+                and dns_hostname == hostname
+                or (dns_hostname is None or dns_support is None)
+                and dns_hostname is None
+                and dns_support is not None
+                and dns_support == support
+            ):
+                results.append(r)
         return results
 
 
@@ -380,27 +386,28 @@ class DhcpOptionsFilter(Filter):
     permissions = ('ec2:DescribeDhcpOptions',)
 
     def validate(self):
-        if not any([self.data.get(k) for k in self.option_keys]):
-            raise PolicyValidationError("one of %s required" % (self.option_keys,))
+        if not any(self.data.get(k) for k in self.option_keys):
+            raise PolicyValidationError(f"one of {self.option_keys} required")
         return self
 
     def process(self, resources, event=None):
         client = local_session(self.manager.session_factory).client('ec2')
         option_ids = [r['DhcpOptionsId'] for r in resources]
-        options_map = {}
-        results = []
-        for options in client.describe_dhcp_options(
-                Filters=[{
-                    'Name': 'dhcp-options-id',
-                    'Values': option_ids}]).get('DhcpOptions', ()):
-            options_map[options['DhcpOptionsId']] = {
+        options_map = {
+            options['DhcpOptionsId']: {
                 o['Key']: [v['Value'] for v in o['Values']]
-                for o in options['DhcpConfigurations']}
+                for o in options['DhcpConfigurations']
+            }
+            for options in client.describe_dhcp_options(
+                Filters=[{'Name': 'dhcp-options-id', 'Values': option_ids}]
+            ).get('DhcpOptions', ())
+        }
 
-        for vpc in resources:
-            if self.process_vpc(vpc, options_map[vpc['DhcpOptionsId']]):
-                results.append(vpc)
-        return results
+        return [
+            vpc
+            for vpc in resources
+            if self.process_vpc(vpc, options_map[vpc['DhcpOptionsId']])
+        ]
 
     def process_vpc(self, vpc, dhcp):
         vpc['c7n:DhcpConfiguration'] = dhcp
@@ -456,8 +463,7 @@ class DescribeSubnets(query.DescribeSource):
             except ClientError as e:
                 if e.response['Error']['Code'] != 'InvalidSubnetID.NotFound':
                     raise
-                sid = extract_subnet_id(e)
-                if sid:
+                if sid := extract_subnet_id(e):
                     resource_ids.remove(sid)
                 else:
                     return []
@@ -468,11 +474,11 @@ RE_ERROR_SUBNET_ID = re.compile("'(?P<subnet_id>subnet-.*?)'")
 
 def extract_subnet_id(state_error):
     "Extract an subnet id from an error"
-    subnet_id = None
-    match = RE_ERROR_SUBNET_ID.search(str(state_error))
-    if match:
-        subnet_id = match.groupdict().get('subnet_id')
-    return subnet_id
+    return (
+        match.groupdict().get('subnet_id')
+        if (match := RE_ERROR_SUBNET_ID.search(str(state_error)))
+        else None
+    )
 
 
 @resources.register('subnet')
@@ -565,15 +571,13 @@ class SecurityGroupDiff:
 
     def diff(self, source, target):
         delta = {}
-        tag_delta = self.get_tag_delta(source, target)
-        if tag_delta:
+        if tag_delta := self.get_tag_delta(source, target):
             delta['tags'] = tag_delta
-        ingress_delta = self.get_rule_delta('IpPermissions', source, target)
-        if ingress_delta:
+        if ingress_delta := self.get_rule_delta('IpPermissions', source, target):
             delta['ingress'] = ingress_delta
-        egress_delta = self.get_rule_delta(
-            'IpPermissionsEgress', source, target)
-        if egress_delta:
+        if egress_delta := self.get_rule_delta(
+            'IpPermissionsEgress', source, target
+        ):
             delta['egress'] = egress_delta
         if delta:
             return delta
@@ -585,10 +589,12 @@ class SecurityGroupDiff:
         source_keys = set(source_tags.keys())
         removed = source_keys.difference(target_keys)
         added = target_keys.difference(source_keys)
-        changed = set()
-        for k in target_keys.intersection(source_keys):
-            if source_tags[k] != target_tags[k]:
-                changed.add(k)
+        changed = {
+            k
+            for k in target_keys.intersection(source_keys)
+            if source_tags[k] != target_tags[k]
+        }
+
         return {k: v for k, v in {
             'added': {k: target_tags[k] for k in added},
             'removed': {k: source_tags[k] for k in removed},
@@ -626,7 +632,7 @@ class SecurityGroupDiff:
             ev = [e[ke] for e in rule[a]]
             ev.sort()
             for e in ev:
-                buf += "%s-" % e
+                buf += f"{e}-"
         # mask to generate the same numeric value across all Python versions
         return zlib.crc32(buf.encode('ascii')) & 0xffffffff
 
@@ -712,13 +718,20 @@ class SecurityGroupPatch:
 
         # Process removes
         if 'removed' in delta:
-            self.retry(revoke, GroupId=group['GroupId'],
-                       IpPermissions=[r for r in delta['removed']])
+            self.retry(
+                revoke,
+                GroupId=group['GroupId'],
+                IpPermissions=list(delta['removed']),
+            )
+
 
         # Process adds
         if 'added' in delta:
-            self.retry(authorize, GroupId=group['GroupId'],
-                       IpPermissions=[r for r in delta['added']])
+            self.retry(
+                authorize,
+                GroupId=group['GroupId'],
+                IpPermissions=list(delta['added']),
+            )
 
 
 class SGUsage(Filter):
@@ -814,8 +827,7 @@ class SGUsage(Filter):
             'EcsParameters.NetworkConfiguration.awsvpcConfiguration.SecurityGroups[]')
         for rule in self.manager.get_resource_manager(
                 'event-rule-target').resources(augment=False):
-            ids = expr.search(rule)
-            if ids:
+            if ids := expr.search(rule):
                 sg_ids.update(ids)
         return sg_ids
 
@@ -951,9 +963,7 @@ class SGDefaultVpc(DefaultVpcBase):
     schema = type_schema('default-vpc')
 
     def __call__(self, resource, event=None):
-        if 'VpcId' not in resource:
-            return False
-        return self.match(resource['VpcId'])
+        return False if 'VpcId' not in resource else self.match(resource['VpcId'])
 
 
 class SGPermission(Filter):
@@ -1121,8 +1131,10 @@ class SGPermission(Filter):
         delta = set(self.data.keys()).difference(self.attrs)
         delta.remove('type')
         if delta:
-            raise PolicyValidationError("Unknown keys %s on %s" % (
-                ", ".join(delta), self.manager.data))
+            raise PolicyValidationError(
+                f'Unknown keys {", ".join(delta)} on {self.manager.data}'
+            )
+
         return self
 
     def process(self, resources, event=None):
@@ -1150,14 +1162,16 @@ class SGPermission(Filter):
                     found = True
                     break
                 found = False
-            only_found = False
-            for port in self.only_ports:
-                if port == perm['FromPort'] and port == perm['ToPort']:
-                    only_found = True
-            if self.only_ports and not only_found:
-                found = found is None or found and True or False
-            if self.only_ports and only_found:
-                found = False
+            only_found = any(
+                port == perm['FromPort'] and port == perm['ToPort']
+                for port in self.only_ports
+            )
+
+            if self.only_ports:
+                if not only_found:
+                    found = found is None or found and True or False
+                if only_found:
+                    found = False
         return found
 
     def _process_cidr(self, cidr_key, cidr_type, range_type, perm):
@@ -1193,9 +1207,7 @@ class SGPermission(Filter):
             found_v4 = self._process_cidr('Cidr', 'CidrIp', 'IpRanges', perm)
         match_op = self.data.get('match-operator', 'and') == 'and' and all or any
         cidr_match = [k for k in (found_v6, found_v4) if k is not None]
-        if not cidr_match:
-            return None
-        return match_op(cidr_match)
+        return match_op(cidr_match) if cidr_match else None
 
     def process_description(self, perm):
         if 'Description' not in self.data:
@@ -1207,11 +1219,19 @@ class SGPermission(Filter):
         vf = ValueFilter(d, self.manager)
         vf.annotate = False
 
-        for k in ('Ipv6Ranges', 'IpRanges', 'UserIdGroupPairs', 'PrefixListIds'):
-            if k not in perm or not perm[k]:
-                continue
-            return vf(perm[k][0])
-        return False
+        return next(
+            (
+                vf(perm[k][0])
+                for k in (
+                    'Ipv6Ranges',
+                    'IpRanges',
+                    'UserIdGroupPairs',
+                    'PrefixListIds',
+                )
+                if k in perm and perm[k]
+            ),
+            False,
+        )
 
     def process_self_reference(self, perm, sg_id):
         found = None
@@ -1241,10 +1261,7 @@ class SGPermission(Filter):
         vf = ValueFilter(sg_refs, self.manager)
         vf.annotate = False
 
-        for sg in sg_resources:
-            if vf(sg):
-                return True
-        return False
+        return any(vf(sg) for sg in sg_resources)
 
     def expand_permissions(self, permissions):
         """Expand each list of cidr, prefix list, user id group pair
@@ -1276,9 +1293,7 @@ class SGPermission(Filter):
         owner_id = resource['OwnerId']
         match_op = self.data.get('match-operator', 'and') == 'and' and all or any
         for perm in self.expand_permissions(resource[self.ip_permissions_key]):
-            perm_matches = {}
-            for idx, f in enumerate(self.vfilters):
-                perm_matches[idx] = bool(f(perm))
+            perm_matches = {idx: bool(f(perm)) for idx, f in enumerate(self.vfilters)}
             perm_matches['description'] = self.process_description(perm)
             perm_matches['ports'] = self.process_ports(perm)
             perm_matches['cidrs'] = self.process_cidrs(perm)
@@ -1291,12 +1306,11 @@ class SGPermission(Filter):
             if match_op == all and not perm_match_values:
                 continue
 
-            match = match_op(perm_match_values)
-            if match:
+            if match := match_op(perm_match_values):
                 matched.append(perm)
 
         if matched:
-            resource.setdefault('Matched%s' % self.ip_permissions_key, []).extend(matched)
+            resource.setdefault(f'Matched{self.ip_permissions_key}', []).extend(matched)
             return True
 
 
@@ -1429,7 +1443,7 @@ class RemovePermissions(BaseAction):
                     continue
                 if not groups:
                     continue
-                method = getattr(client, 'revoke_security_group_%s' % label)
+                method = getattr(client, f'revoke_security_group_{label}')
                 method(GroupId=r['GroupId'], IpPermissions=groups)
 
 
@@ -1501,9 +1515,9 @@ class SetPermissions(BaseAction):
         request_template = {'GroupId': 'sg-06bc5ce18a2e5d57a'}
         for perm_type, shape in (
                 ('egress', self.egress_shape), ('ingress', self.ingress_shape)):
-            for perm in self.data.get('add-%s' % type, ()):
+            for perm in self.data.get(f'add-{type}', ()):
                 params = dict(request_template)
-                params.update(perm)
+                params |= perm
                 shape_validate(params, shape, 'ec2')
 
     def get_permissions(self):
@@ -1716,7 +1730,10 @@ class DeleteNetworkInterface(BaseAction):
                     client.delete_network_interface,
                     NetworkInterfaceId=r['NetworkInterfaceId'])
             except ClientError as err:
-                if not err.response['Error']['Code'] == 'InvalidNetworkInterfaceID.NotFound':
+                if (
+                    err.response['Error']['Code']
+                    != 'InvalidNetworkInterfaceID.NotFound'
+                ):
                     raise
 
 
@@ -1788,11 +1805,7 @@ class Route(ValueFilter):
     def process(self, resources, event=None):
         results = []
         for r in resources:
-            matched = []
-            for route in r['Routes']:
-                if self.match(route):
-                    matched.append(route)
-            if matched:
+            if matched := [route for route in r['Routes'] if self.match(route)]:
                 r.setdefault('c7n:matched-routes', []).extend(matched)
                 results.append(r)
         return results
@@ -2076,8 +2089,10 @@ class AddressRelease(BaseAction):
                 client.disassociate_address(AssociationId=aa['AssociationId'])
             except ClientError as e:
                 # If its already been diassociated ignore, else raise.
-                if not(e.response['Error']['Code'] == 'InvalidAssocationID.NotFound' and
-                       aa['AssocationId'] in e.response['Error']['Message']):
+                if (
+                    e.response['Error']['Code'] != 'InvalidAssocationID.NotFound'
+                    or aa['AssocationId'] not in e.response['Error']['Message']
+                ):
                     raise e
                 associated_addrs.remove(aa)
         return associated_addrs
@@ -2092,7 +2107,7 @@ class AddressRelease(BaseAction):
             self.log.warning(
                 "Filtered %d attached eips of %d eips. Use 'force: true' to release them.",
                 len(assoc_addrs), len(network_addrs))
-        elif len(assoc_addrs) and force:
+        elif len(assoc_addrs):
             unassoc_addrs = itertools.chain(
                 unassoc_addrs, self.process_attached(client, assoc_addrs))
 
@@ -2160,7 +2175,10 @@ class DeleteInternetGateway(BaseAction):
             try:
                 client.delete_internet_gateway(InternetGatewayId=r['InternetGatewayId'])
             except ClientError as err:
-                if not err.response['Error']['Code'] == 'InvalidInternetGatewayId.NotFound':
+                if (
+                    err.response['Error']['Code']
+                    != 'InvalidInternetGatewayId.NotFound'
+                ):
                     raise
 
 
@@ -2388,12 +2406,14 @@ class DeleteUnusedKeyPairs(BaseAction):
     def validate(self):
         if not [f for f in self.manager.iter_filters() if isinstance(f, UnusedKeyPairs)]:
             raise PolicyValidationError(
-                "delete should be used in conjunction with the unused filter on %s" % (
-                    self.manager.data,))
+                f"delete should be used in conjunction with the unused filter on {self.manager.data}"
+            )
+
         if [True for f in self.manager.iter_filters() if f.data.get('state') is False]:
             raise PolicyValidationError(
-                "You policy has filtered used keys you should use this with unused keys %s" % (
-                    self.manager.data,))
+                f"You policy has filtered used keys you should use this with unused keys {self.manager.data}"
+            )
+
         return self
 
     def process(self, unused):
@@ -2470,18 +2490,23 @@ class CreateFlowLogs(BaseAction):
         for r in dvalidation.get('required', ()):
             if not self.data.get(r):
                 raise PolicyValidationError(
-                    'Required %s missing for destination-type:%s' % (
-                        r, destination_type))
+                    f'Required {r} missing for destination-type:{destination_type}'
+                )
+
         for r in dvalidation.get('absent', ()):
             if r in self.data:
                 raise PolicyValidationError(
-                    '%s is prohibited for destination-type:%s' % (
-                        r, destination_type))
-        if ('one-of' in dvalidation and
-                sum([1 for k in dvalidation['one-of'] if k in self.data]) != 1):
+                    f'{r} is prohibited for destination-type:{destination_type}'
+                )
+
+        if (
+            'one-of' in dvalidation
+            and sum(k in self.data for k in dvalidation['one-of']) != 1
+        ):
             raise PolicyValidationError(
-                "Destination:%s Exactly one of %s required" % (
-                    destination_type, ", ".join(dvalidation['one-of'])))
+                f"""Destination:{destination_type} Exactly one of {", ".join(dvalidation['one-of'])} required"""
+            )
+
         return self
 
     def delete_flow_logs(self, client, rids):
@@ -2592,11 +2617,7 @@ class Entry(Filter):
 
         results = []
         for r in resources:
-            matched = []
-            for e in r[self.annotation_key]:
-                if vf(e):
-                    matched.append(e)
-            if matched:
+            if matched := [e for e in r[self.annotation_key] if vf(e)]:
                 results.append(r)
                 r[self.match_annotation_key] = matched
         return results

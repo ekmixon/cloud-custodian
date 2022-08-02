@@ -113,14 +113,15 @@ class AutoscalingBase(BaseAction):
 
     def update_scaling_suspended_state(self, target, suspended_value):
         resource_id = target['ResourceId']
-        update_suspended_state = {}
-        for state, suspended in target['SuspendedState'].items():
-            if suspended != suspended_value:
-                update_suspended_state[state] = suspended_value
+        if update_suspended_state := {
+            state: suspended_value
+            for state, suspended in target['SuspendedState'].items()
+            if suspended != suspended_value
+        }:
+            self.log.debug(
+                f'Target {resource_id} updating suspended_state={update_suspended_state}'
+            )
 
-        if update_suspended_state:
-            self.log.debug('Target %s updating suspended_state=%s' %
-                (resource_id, update_suspended_state))
 
             client = local_session(self.manager.session_factory).client(
                 'application-autoscaling')
@@ -158,8 +159,7 @@ class AutoscalingBase(BaseAction):
 
         if capacity_changes:
             resource_id = target['ResourceId']
-            self.log.debug('Target %s updating min=%s, max=%s'
-                % (resource_id, new_min, new_max))
+            self.log.debug(f'Target {resource_id} updating min={new_min}, max={new_max}')
             client = local_session(self.manager.session_factory).client(
                 'application-autoscaling')
             client.register_scalable_target(
@@ -175,8 +175,9 @@ class AutoscalingBase(BaseAction):
     def process_restore_scaling_options_from_tag(self, resource, target):
         # we want to restore all ASG size params from saved data
         self.log.debug(
-            'Want to restore resource %s from tag %s' %
-            (target['ResourceId'], self.data['restore-options-tag']))
+            f"Want to restore resource {target['ResourceId']} from tag {self.data['restore-options-tag']}"
+        )
+
         restore_options = self.get_resource_tag(
             resource,
             self.data['restore-options-tag'])
@@ -185,13 +186,13 @@ class AutoscalingBase(BaseAction):
         if restore_options is not None:
             for field in restore_options.split(':'):
                 (param, value) = field.split('=')
-                if param == 'Min':
-                    new_min = int(value)
-                elif param == 'Max':
-                    new_max = int(value)
-                elif param == 'Desired':
+                if param == 'Desired':
                     new_desired = int(value)
 
+                elif param == 'Max':
+                    new_max = int(value)
+                elif param == 'Min':
+                    new_min = int(value)
             return self.update_scaling_options(resource, target, new_min, new_max, new_desired)
 
         return False
@@ -205,8 +206,10 @@ class AutoscalingBase(BaseAction):
     def process_save_scaling_options_to_tag(self, resource, target):
         current_desired = self.get_resource_desired(resource)
         # save existing params to a tag before changing them
-        self.log.debug('Saving resource %s size to tag %s' %
-            (target['ResourceId'], self.data['save-options-tag']))
+        self.log.debug(
+            f"Saving resource {target['ResourceId']} size to tag {self.data['save-options-tag']}"
+        )
+
         self.set_resource_tag(
             resource,
             self.data['save-options-tag'],

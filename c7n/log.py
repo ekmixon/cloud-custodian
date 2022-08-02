@@ -203,8 +203,7 @@ class Transport:
 
     def loop(self):
         def keyed(datum):
-            return "%s=%s" % (
-                datum.pop('group'), datum.pop('stream'))
+            return f"{datum.pop('group')}={datum.pop('stream')}"
 
         while True:
             try:

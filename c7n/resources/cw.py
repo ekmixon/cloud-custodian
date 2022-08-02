@@ -240,11 +240,7 @@ class ValidEventRuleTargetFilter(ChildResourceFilter):
         resources = self.get_rules_with_children(resources)
         results = []
 
-        if self.data.get('all'):
-            op = any
-        else:
-            op = all
-
+        op = any if self.data.get('all') else all
         for r in resources:
             resolved = arn_resolver.resolve(r['c7n:ChildArns'])
             if not op(resolved.values()):
@@ -295,7 +291,7 @@ class EventRuleDelete(BaseAction):
                 child_manager = self.manager.get_resource_manager('aws.event-rule-target')
                 if not children:
                     children = EventRuleTargetFilter({}, child_manager).get_related(resources)
-                targets = list(set([t['Id'] for t in children.get(r['Name'])]))
+                targets = list({t['Id'] for t in children.get(r['Name'])})
                 client.remove_targets(Rule=r['Name'], Ids=targets)
                 client.delete_rule(Name=r['Name'])
 
@@ -542,11 +538,11 @@ class LogMetricAlarmFilter(ValueFilter):
     def process(self, resources, event=None):
         self.augment(resources)
 
-        matched = []
-        for r in resources:
-            if any((self.match(alarm) for alarm in r[self.annotation_key])):
-                matched.append(r)
-        return matched
+        return [
+            r
+            for r in resources
+            if any((self.match(alarm) for alarm in r[self.annotation_key]))
+        ]
 
 
 @LogGroup.action_registry.register('retention')
@@ -671,11 +667,11 @@ class LogCrossAccountFilter(CrossAccountAccessFilter):
         accounts = self.get_accounts()
         results = []
         with self.executor_factory(max_workers=1) as w:
-            futures = []
-            for rset in chunks(resources, 50):
-                futures.append(
-                    w.submit(
-                        self.process_resource_set, client, accounts, rset))
+            futures = [
+                w.submit(self.process_resource_set, client, accounts, rset)
+                for rset in chunks(resources, 50)
+            ]
+
             for f in as_completed(futures):
                 if f.exception():
                     self.log.error(
@@ -787,8 +783,7 @@ class EncryptLogGroup(BaseAction):
         if not key:
             raise ValueError('Must specify either a KMS key ARN or Alias')
         if 'alias/' not in key and ':key/' not in key:
-            raise PolicyValidationError(
-                "Invalid kms key format %s" % key)
+            raise PolicyValidationError(f"Invalid kms key format {key}")
         return self
 
     def resolve_key(self, key):

@@ -40,8 +40,7 @@ class SecurityHubFindingFilter(Filter):
     query_shape = 'AwsSecurityFindingFilters'
 
     def validate(self):
-        query = self.data.get('query')
-        if query:
+        if query := self.data.get('query'):
             from c7n.resources import aws
             aws.shape_validate(query, self.query_shape, 'securityhub')
 
@@ -64,7 +63,7 @@ class SecurityHubFindingFilter(Filter):
         return found
 
     @classmethod
-    def register_resources(klass, registry, resource_class):
+    def register_resources(cls, registry, resource_class):
         """ meta model subscriber on resource registration.
 
         SecurityHub Findings Filter
@@ -73,7 +72,7 @@ class SecurityHubFindingFilter(Filter):
             return
         if not resource_class.has_arn():
             return
-        resource_class.filter_registry.register('finding', klass)
+        resource_class.filter_registry.register('finding', cls)
 
 
 @execution.register('hub-finding')
@@ -136,12 +135,16 @@ class SecurityHub(LambdaMode):
                         label = r['Details']['AwsIamAccessKey']['PrincipalName']
                     else:
                         label = r['Details']['AwsIamAccessKey']['UserName']
-                    rids.add('arn:{}:iam::{}:user/{}'.format(get_partition(r['Region']),
-                        f['AwsAccountId'], label))
+                    rids.add(
+                        f"arn:{get_partition(r['Region'])}:iam::{f['AwsAccountId']}:user/{label}"
+                    )
+
                 elif not r['Id'].startswith('arn'):
                     if r['Type'] == 'AwsEc2Instance':
-                        rids.add('arn:{}:ec2:{}:{}:instance/{}'.format(get_partition(r['Region']),
-                            r['Region'], f['AwsAccountId'], r['Id']))
+                        rids.add(
+                            f"arn:{get_partition(r['Region'])}:ec2:{r['Region']}:{f['AwsAccountId']}:instance/{r['Id']}"
+                        )
+
                     else:
                         log.warning("security hub unknown id:%s rtype:%s",
                                 r['Id'], r['Type'])
@@ -160,8 +163,7 @@ class SecurityHub(LambdaMode):
         if not insights or len(insights) > 1:
             return []
         insight = insights.pop()
-        params = {}
-        params['Filters'] = insight['Filters']
+        params = {'Filters': insight['Filters']}
         params['Filters'][rtype] = [
             {'Comparison': 'EQUALS', 'Value': r} for r in rids]
         findings = client.get_findings(**params).get('Findings', ())
@@ -367,16 +369,17 @@ class PostFinding(Action):
         for finding_type in self.data["types"]:
             if finding_type.count('/') > 2 or finding_type.split('/')[0] not in FindingTypes:
                 raise PolicyValidationError(
-                    "Finding types must be in the format 'namespace/category/classifier'."
-                    " Found {}. Valid namespace values are: {}.".format(
-                        finding_type, " | ".join([ns for ns in FindingTypes])))
+                    f"""Finding types must be in the format 'namespace/category/classifier'. Found {finding_type}. Valid namespace values are: {" | ".join(list(FindingTypes))}."""
+                )
 
     def get_finding_tag(self, resource):
         finding_tag = None
         tags = resource.get('Tags', [])
 
-        finding_key = '{}:{}'.format('c7n:FindingId',
-            self.data.get('title', self.manager.ctx.policy.name))
+        finding_key = (
+            f"c7n:FindingId:{self.data.get('title', self.manager.ctx.policy.name)}"
+        )
+
 
         # Support Tags as dictionary
         if isinstance(tags, dict):
@@ -416,12 +419,10 @@ class PostFinding(Action):
                     if key == self.NEW_FINDING:
                         finding_id = None
                         created_at = now
-                        updated_at = now
                     else:
                         finding_id, created_at = self.get_finding_tag(
                             resource).split(':', 1)
-                        updated_at = now
-
+                    updated_at = now
                     finding = self.get_finding(
                         [resource], finding_id, created_at, updated_at)
                     findings.append(finding)
@@ -431,14 +432,19 @@ class PostFinding(Action):
                         tag_action = self.manager.action_registry.get('tag')
                         if tag_action is None:
                             continue
-                        tag_action({
-                            'key': '{}:{}'.format(
-                                'c7n:FindingId',
-                                self.data.get(
-                                    'title', self.manager.ctx.policy.name)),
-                            'value': '{}:{}'.format(
-                                finding['Id'], created_at)},
-                            self.manager).process([resource])
+                        tag_action(
+                            {
+                                'key': '{}:{}'.format(
+                                    'c7n:FindingId',
+                                    self.data.get(
+                                        'title', self.manager.ctx.policy.name
+                                    ),
+                                ),
+                                'value': f"{finding['Id']}:{created_at}",
+                            },
+                            self.manager,
+                        ).process([resource])
+
                     else:
                         stats['Update'] += 1
             import_response = self.manager.retry(
@@ -446,8 +452,7 @@ class PostFinding(Action):
             )
             if import_response['FailedCount'] > 0:
                 stats['Failed'] += import_response['FailedCount']
-                self.log.error(
-                    "import_response=%s" % (import_response))
+                self.log.error(f"import_response={import_response}")
         self.log.debug(
             "policy:%s securityhub %d findings resources %d new %d updated %d failed",
             self.manager.ctx.policy.name,
@@ -461,32 +466,29 @@ class PostFinding(Action):
         model = self.manager.resource_type
         region = self.data.get('region', self.manager.config.region)
 
-        if existing_finding_id:
-            finding_id = existing_finding_id
-        else:
-            finding_id = '{}/{}/{}/{}'.format(  # nosec
-                self.manager.config.region,
-                self.manager.config.account_id,
-                hashlib.md5(json.dumps(  # nosemgrep
-                    policy.data).encode('utf8')).hexdigest(),
-                hashlib.md5(json.dumps(list(sorted(  # nosemgrep
-                    [r[model.id] for r in resources]))).encode(
-                        'utf8')).hexdigest())
+        finding_id = existing_finding_id or '{}/{}/{}/{}'.format(  # nosec
+            self.manager.config.region,
+            self.manager.config.account_id,
+            hashlib.md5(
+                json.dumps(policy.data).encode('utf8')  # nosemgrep
+            ).hexdigest(),
+            hashlib.md5(
+                json.dumps(
+                    list(sorted([r[model.id] for r in resources]))  # nosemgrep
+                ).encode('utf8')
+            ).hexdigest(),
+        )
+
         finding = {
             "SchemaVersion": self.FindingVersion,
-            "ProductArn": "arn:{}:securityhub:{}::product/cloud-custodian/cloud-custodian".format(
-                get_partition(self.manager.config.region),
-                region
-            ),
+            "ProductArn": f"arn:{get_partition(self.manager.config.region)}:securityhub:{region}::product/cloud-custodian/cloud-custodian",
             "AwsAccountId": self.manager.config.account_id,
-            # Long search chain for description values, as this was
-            # made required long after users had policies deployed, so
-            # use explicit description, or policy description, or
-            # explicit title, or policy name, in that order.
             "Description": self.data.get(
-                "description", policy.data.get(
-                    "description",
-                    self.data.get('title', policy.name))).strip(),
+                "description",
+                policy.data.get(
+                    "description", self.data.get('title', policy.name)
+                ),
+            ).strip(),
             "Title": self.data.get("title", policy.name),
             'Id': finding_id,
             "GeneratorId": policy.name,
@@ -494,6 +496,7 @@ class PostFinding(Action):
             'UpdatedAt': updated_at,
             "RecordState": "ACTIVE",
         }
+
 
         severity = {'Product': 0, 'Normalized': 0, 'Label': 'INFORMATIONAL'}
         if self.data.get("severity") is not None:
@@ -530,22 +533,17 @@ class PostFinding(Action):
         }
 
         if "fields" in self.data:
-            fields.update(self.data["fields"])
+            fields |= self.data["fields"]
         else:
             tags = {}
             for t in policy.tags:
-                if ":" in t:
-                    k, v = t.split(":", 1)
-                else:
-                    k, v = t, ""
+                k, v = t.split(":", 1) if ":" in t else (t, "")
                 tags[k] = v
             fields.update(tags)
         if fields:
             finding["ProductFields"] = fields
 
-        finding_resources = []
-        for r in resources:
-            finding_resources.append(self.format_resource(r))
+        finding_resources = [self.format_resource(r) for r in resources]
         finding["Resources"] = finding_resources
         finding["Types"] = list(self.data["types"])
 
@@ -575,17 +573,10 @@ class OtherResourcePostFinding(PostFinding):
     resource_type = 'Other'
 
     def format_resource(self, r):
-        details = {}
-        for k in r:
-            if isinstance(k, (list, dict)):
-                continue
-            details[k] = r[k]
-
+        details = {k: r[k] for k in r if not isinstance(k, (list, dict))}
         for f in self.fields:
-            value = jmespath.search(f['expr'], r)
-            if not value:
-                continue
-            details[f['key']] = value
+            if value := jmespath.search(f['expr'], r):
+                details[f['key']] = value
 
         for k, v in details.items():
             if isinstance(v, datetime):
@@ -606,15 +597,14 @@ class OtherResourcePostFinding(PostFinding):
             'Partition': get_partition(self.manager.config.region),
             'Details': {self.resource_type: filter_empty(details)}
         }
-        tags = {t['Key']: t['Value'] for t in r.get('Tags', [])}
-        if tags:
+        if tags := {t['Key']: t['Value'] for t in r.get('Tags', [])}:
             other['Tags'] = tags
         return other
 
     @classmethod
-    def register_resource(klass, registry, resource_class):
+    def register_resource(cls, registry, resource_class):
         if 'post-finding' not in resource_class.action_registry:
-            resource_class.action_registry.register('post-finding', klass)
+            resource_class.action_registry.register('post-finding', cls)
 
 
 AWS.resources.subscribe(OtherResourcePostFinding.register_resource)

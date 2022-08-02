@@ -43,16 +43,13 @@ class OutputRegistry(PluginRegistry):
         if not selector:
             return self['default'](ctx, {'url': selector})
         if '://' not in selector and selector in self:
-            selector = "{}://".format(selector)
+            selector = f"{selector}://"
         elif self.default_protocol and '://' not in selector:
-            selector = "{}://{}".format(
-                self.default_protocol, selector)
+            selector = f"{self.default_protocol}://{selector}"
         for k in self.keys():
             if selector.startswith(k):
                 return self[k](ctx, parse_url_config(selector))
-        raise InvalidOutputConfig("Invalid %s: %s" % (
-            self.plugin_type,
-            selector))
+        raise InvalidOutputConfig(f"Invalid {self.plugin_type}: {selector}")
 
 
 class BlobOutputRegistry(OutputRegistry):
@@ -131,8 +128,7 @@ class DeltaStats:
     def delta(self, before, after):
         delta = {}
         for k in before:
-            val = after[k] - before[k]
-            if val:
+            if val := after[k] - before[k]:
                 delta[k] = val
         return delta
 
@@ -217,15 +213,12 @@ class SystemStats(DeltaStats):
                 snapshot['num_ctx_switches_involuntary']) = self.process.num_ctx_switches()
             # io counters ( not available on osx)
             if getattr(self.process, 'io_counters', None):
-                try:
+                with contextlib.suppress(NotImplementedError):
                     io = self.process.io_counters()
                     for counter in (
                             'read_count', 'write_count',
                             'write_bytes', 'read_bytes'):
                         snapshot[counter] = getattr(io, counter)
-                except NotImplementedError:
-                    # some old kernels and Windows Linux Subsystem throw this
-                    pass
             # memory counters
             mem = self.process.memory_info()
             for counter in (
@@ -285,9 +278,9 @@ class LogMetrics(Metrics):
                 log.debug(self.render_metric(m))
 
     def render_metric(self, m):
-        label = "metric:%s %s:%s" % (m['MetricName'], m['Unit'], m['Value'])
+        label = f"metric:{m['MetricName']} {m['Unit']}:{m['Value']}"
         for d in m['Dimensions']:
-            label += " %s:%s" % (d['Name'].lower(), d['Value'].lower())
+            label += f" {d['Name'].lower()}:{d['Value'].lower()}"
         return label
 
     def _format_metric(self, key, value, unit, dimensions):
@@ -325,7 +318,7 @@ class LogOutput:
         raise NotImplementedError()
 
     def __enter__(self):
-        log.debug("Storing output with %s" % repr(self))
+        log.debug(f"Storing output with {repr(self)}")
         self.join_log()
         return self
 
@@ -356,7 +349,7 @@ class LogOutput:
 class LogFile(LogOutput):
 
     def __repr__(self):
-        return "<LogFile file://%s>" % self.log_path
+        return f"<LogFile file://{self.log_path}>"
 
     @property
     def log_path(self):
@@ -426,7 +419,7 @@ class DirectoryOutput:
         return
 
     def __repr__(self):
-        return "<%s to dir:%s>" % (self.__class__.__name__, self.root_dir)
+        return f"<{self.__class__.__name__} to dir:{self.root_dir}>"
 
     def compress(self):
         # Compress files individually so thats easy to walk them, without
@@ -434,7 +427,7 @@ class DirectoryOutput:
         for root, dirs, files in os.walk(self.root_dir):
             for f in files:
                 fp = os.path.join(root, f)
-                with gzip.open(fp + ".gz", "wb", compresslevel=7) as zfh:
+                with gzip.open(f"{fp}.gz", "wb", compresslevel=7) as zfh:
                     with open(fp, "rb") as sfh:
                         shutil.copyfileobj(sfh, zfh, length=2**15)
                     os.remove(fp)
@@ -445,13 +438,13 @@ class DirectoryOutput:
         return output_url.format(**self.get_output_vars())
 
     def get_output_vars(self):
-        data = {
+        return {
             'account_id': self.ctx.options.account_id,
             'region': self.ctx.options.region,
             'policy_name': self.ctx.policy.name,
             'now': datetime.datetime.utcnow(),
-            'uuid': str(uuid.uuid4())}
-        return data
+            'uuid': str(uuid.uuid4()),
+        }
 
 
 class BlobOutput(DirectoryOutput):
@@ -468,10 +461,7 @@ class BlobOutput(DirectoryOutput):
         self.root_dir = tempfile.mkdtemp()
 
     def __repr__(self):
-        return "<output:%s to bucket:%s prefix:%s>" % (
-            self.type,
-            self.bucket,
-            self.key_prefix)
+        return f"<output:{self.type} to bucket:{self.bucket} prefix:{self.key_prefix}>"
 
     def get_output_path(self, output_url):
         if '{' not in output_url:

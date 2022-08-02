@@ -54,14 +54,10 @@ class AccessAnalyzer(ValueFilter):
             findings = r.get(self.analysis_annotation, [])
             if not findings:
                 continue
-            elif not len(self.data) > 1:
+            elif len(self.data) <= 1:
                 results.append(r)
                 continue
-            found = False
-            for f in findings:
-                if self(f):
-                    found = True
-                    break
+            found = any(self(f) for f in findings)
             if found:
                 results.append(r)
         return results
@@ -93,16 +89,16 @@ class AccessAnalyzer(ValueFilter):
             found = a
         if not found:
             raise PolicyExecutionError(
-                "policy:%s no access analyzer found in account or org analyzer specified" % (
-                    self.manager.ctx.policy.name
-                ))
+                f"policy:{self.manager.ctx.policy.name} no access analyzer found in account or org analyzer specified"
+            )
+
         return found['arn']
 
     @classmethod
-    def register_resources(klass, registry, resource_class):
-        if resource_class.resource_type.cfn_type not in klass.supported_types:
+    def register_resources(cls, registry, resource_class):
+        if resource_class.resource_type.cfn_type not in cls.supported_types:
             return
-        resource_class.filter_registry.register('iam-analyzer', klass)
+        resource_class.filter_registry.register('iam-analyzer', cls)
 
 
 resources.subscribe(AccessAnalyzer.register_resources)

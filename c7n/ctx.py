@@ -81,10 +81,7 @@ class ExecutionContext:
         self.api_stats.__enter__()
         self.tracer.__enter__()
 
-        # Api stats and user agent modification by policy require updating
-        # in place the cached session thread local.
-        update_session = getattr(self.session_factory, 'update', None)
-        if update_session:
+        if update_session := getattr(self.session_factory, 'update', None):
             update_session(local_session(self.session_factory))
         return self
 

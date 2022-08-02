@@ -85,7 +85,7 @@ class ResourceManager:
             provider_name = self.ctx.policy.provider_name
 
         # check and load
-        load_resources(('%s.%s' % (provider_name, resource_type),))
+        load_resources((f'{provider_name}.{resource_type}', ))
         provider_resources = clouds[provider_name].resources
         klass = provider_resources.get(resource_type)
         if klass is None:
@@ -107,7 +107,7 @@ class ResourceManager:
                 break
             rcount = len(resources)
 
-            with self.ctx.tracer.subsegment("filter:%s" % f.type):
+            with self.ctx.tracer.subsegment(f"filter:{f.type}"):
                 resources = f.process(resources, event)
 
             if event and event.get('debug', False):

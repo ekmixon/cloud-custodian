@@ -144,13 +144,11 @@ class PythonPackageArchive:
                 if path.endswith('.pyc'):
                     _path = path[:-1]
                     if not os.path.isfile(_path):
-                        raise ValueError(
-                            'Could not find a *.py source file behind ' + path)
+                        raise ValueError(f'Could not find a *.py source file behind {path}')
                     path = _path
 
                 if not path.endswith('.py'):
-                    raise ValueError(
-                        'We need a *.py source file instead of ' + path)
+                    raise ValueError(f'We need a *.py source file instead of {path}')
 
                 self.add_file(path)
 
@@ -264,10 +262,12 @@ class PythonPackageArchive:
 def get_exec_options(options):
     """preserve cli output options into serverless environment.
     """
-    d = {}
-    for k in ('log_group', 'tracer', 'output_dir', 'metrics_enabled'):
-        if options[k]:
-            d[k] = options[k]
+    d = {
+        k: options[k]
+        for k in ('log_group', 'tracer', 'output_dir', 'metrics_enabled')
+        if options[k]
+    }
+
     # ignore local fs/dir output paths
     if 'output_dir' in d and '://' not in d['output_dir']:
         d.pop('output_dir')
@@ -303,8 +303,7 @@ def generate_requirements(packages, ignore=(), exclude=(), include_self=False):
         if d in exclude:
             continue
         try:
-            lines.append(
-                '%s==%s' % (d, pkgmd.distribution(d).version))
+            lines.append(f'{d}=={pkgmd.distribution(d).version}')
         except pkgmd.PackageNotFoundError:
             continue
     return '\n'.join(lines)
@@ -378,9 +377,7 @@ class LambdaManager:
         p = self.client.get_paginator('list_functions')
         for rp in p.paginate():
             for f in rp.get('Functions', []):
-                if not prefix:
-                    yield f
-                elif f['FunctionName'].startswith(prefix):
+                if not prefix or prefix and f['FunctionName'].startswith(prefix):
                     yield f
 
     def publish(self, func, alias=None, role=None, s3_uri=None):
@@ -390,7 +387,7 @@ class LambdaManager:
         if alias and changed:
             func.alias = self.publish_alias(result, alias)
         elif alias:
-            func.alias = "%s:%s" % (func.arn, alias)
+            func.alias = f"{func.arn}:{alias}"
         else:
             func.alias = func.arn
 
@@ -420,7 +417,6 @@ class LambdaManager:
             if k == 'Layers' and k in old_config and new_config[k]:
                 if sorted(new_config[k]) != sorted([l['Arn'] for l in old_config[k]]):
                     changed.append(k)
-            # Vpc needs special handling as a dict with lists
             elif k == 'VpcConfig' and k in old_config and new_config[k]:
                 if set(old_config[k]['SubnetIds']) != set(
                         new_config[k]['SubnetIds']):
@@ -432,10 +428,11 @@ class LambdaManager:
                 if k in LAMBDA_EMPTY_VALUES and LAMBDA_EMPTY_VALUES[k] == new_config[k]:
                     continue
                 changed.append(k)
-            # For role we allow name only configuration
             elif k == 'Role':
-                if (new_config[k] != old_config[k] and
-                        not old_config[k].split('/', 1)[1] == new_config[k]):
+                if (
+                    new_config[k] != old_config[k]
+                    and old_config[k].split('/', 1)[1] != new_config[k]
+                ):
                     changed.append(k)
             elif new_config[k] != old_config[k]:
                 changed.append(k)
@@ -443,14 +440,13 @@ class LambdaManager:
 
     @staticmethod
     def diff_tags(old_tags, new_tags):
-        add = {}
-        remove = set()
-        for k, v in new_tags.items():
-            if k not in old_tags or old_tags[k] != v:
-                add[k] = v
-        for k in old_tags:
-            if k not in new_tags:
-                remove.add(k)
+        add = {
+            k: v
+            for k, v in new_tags.items()
+            if k not in old_tags or old_tags[k] != v
+        }
+
+        remove = {k for k in old_tags if k not in new_tags}
         return add, list(remove)
 
     def _create_or_update(self, func, role=None, s3_uri=None, qualifier=None):
@@ -471,8 +467,7 @@ class LambdaManager:
             result = old_config = existing['Configuration']
             if archive.get_checksum() != old_config['CodeSha256']:
                 log.debug("Updating function %s code", func.name)
-                params = dict(FunctionName=func.name, Publish=True)
-                params.update(code_ref)
+                params = dict(FunctionName=func.name, Publish=True) | code_ref
                 result = self.client.update_function_code(**params)
                 waiter = self.client.get_waiter('function_updated')
                 waiter.wait(FunctionName=func.name)
@@ -487,8 +482,7 @@ class LambdaManager:
             if self._update_tags(existing, new_config.pop('Tags', {})):
                 changed = True
 
-            config_changed = self.delta_function(old_config, new_config)
-            if config_changed:
+            if config_changed := self.delta_function(old_config, new_config):
                 log.debug("Updating function: %s config %s",
                           func.name, ", ".join(sorted(config_changed)))
                 result = self.client.update_function_configuration(**new_config)
@@ -534,11 +528,11 @@ class LambdaManager:
             existing.get('Tags', {}), new_tags)
         changed = False
         if tags_to_add:
-            log.debug("Updating function tags: %s" % base_arn)
+            log.debug(f"Updating function tags: {base_arn}")
             self.client.tag_resource(Resource=base_arn, Tags=tags_to_add)
             changed = True
         if tags_to_remove:
-            log.debug("Removing function stale tags: %s" % base_arn)
+            log.debug(f"Removing function stale tags: {base_arn}")
             self.client.untag_resource(Resource=base_arn, TagKeys=tags_to_remove)
             changed = True
         return changed
@@ -546,7 +540,7 @@ class LambdaManager:
     def _upload_func(self, s3_uri, func, archive):
         from boto3.s3.transfer import S3Transfer, TransferConfig
         _, bucket, key_prefix = parse_s3(s3_uri)
-        key = "%s/%s" % (key_prefix, func.name)
+        key = f"{key_prefix}/{func.name}"
         transfer = S3Transfer(
             self.session_factory().client('s3'),
             config=TransferConfig(
@@ -567,21 +561,20 @@ class LambdaManager:
         func_name = func_data['FunctionName']
         func_version = func_data['Version']
 
-        exists = resource_exists(
-            self.client.get_alias, FunctionName=func_name, Name=alias)
-
-        if not exists:
-            log.debug("Publishing custodian lambda alias %s", alias)
-            alias_result = self.client.create_alias(
-                FunctionName=func_name,
-                Name=alias,
-                FunctionVersion=func_version)
-        else:
+        if exists := resource_exists(
+            self.client.get_alias, FunctionName=func_name, Name=alias
+        ):
             if (exists['FunctionVersion'] == func_version and
                     exists['Name'] == alias):
                 return exists['AliasArn']
             log.debug('Updating custodian lambda alias %s', alias)
             alias_result = self.client.update_alias(
+                FunctionName=func_name,
+                Name=alias,
+                FunctionVersion=func_version)
+        else:
+            log.debug("Publishing custodian lambda alias %s", alias)
+            alias_result = self.client.create_alias(
                 FunctionName=func_name,
                 Name=alias,
                 FunctionVersion=func_version)
@@ -732,9 +725,8 @@ class LambdaFunction(AbstractLambdaFunction):
             'name', 'handler', 'memory_size',
             'timeout', 'role', 'runtime',
             'description'}
-        missing = required.difference(func_data)
-        if missing:
-            raise ValueError("Missing required keys %s" % " ".join(missing))
+        if missing := required.difference(func_data):
+            raise ValueError(f'Missing required keys {" ".join(missing)}')
         self.archive = archive
 
     @property
@@ -835,7 +827,7 @@ class PolicyLambda(AbstractLambdaFunction):
     @property
     def name(self):
         prefix = self.policy.data['mode'].get('function-prefix', 'custodian-')
-        return "%s%s" % (prefix, self.policy.name)
+        return f"{prefix}{self.policy.name}"
 
     event_name = name
 
@@ -1041,15 +1033,13 @@ class CloudWatchEventSource(AWSEventBase):
 
         Name is already implied.
         """
-        for k in ['State', 'EventPattern', 'ScheduleExpression']:
-            if src.get(k) != tgt.get(k):
-                return True
-        return False
+        return any(
+            src.get(k) != tgt.get(k)
+            for k in ['State', 'EventPattern', 'ScheduleExpression']
+        )
 
     def __repr__(self):
-        return "<CWEvent Type:%s Events:%s>" % (
-            self.data.get('type'),
-            ', '.join(map(str, self.data.get('events', []))))
+        return f"<CWEvent Type:{self.data.get('type')} Events:{', '.join(map(str, self.data.get('events', [])))}>"
 
     def resolve_cloudtrail_payload(self, payload):
         sources = self.data.get('sources', [])
@@ -1062,7 +1052,7 @@ class CloudWatchEventSource(AWSEventBase):
                     continue
             else:
                 event_info = e
-                events.append(e['event'])
+                events.append(event_info['event'])
             sources.append(event_info['source'])
 
         payload['detail'] = {
@@ -1075,7 +1065,7 @@ class CloudWatchEventSource(AWSEventBase):
 
         payload = {}
         if pattern:
-            payload.update(pattern)
+            payload |= pattern
 
         if event_type == 'cloudtrail':
             payload['detail-type'] = ['AWS API Call via CloudTrail']
@@ -1087,8 +1077,10 @@ class CloudWatchEventSource(AWSEventBase):
             payload['source'] = ['aws.guardduty']
             payload['detail-type'] = ['GuardDuty Finding']
             if 'resource-filter' in self.data:
-                payload.update({
-                    'detail': {'resource': {'resourceType': [self.data['resource-filter']]}}})
+                payload['detail'] = {
+                    'resource': {'resourceType': [self.data['resource-filter']]}
+                }
+
         elif event_type == "ec2-instance-state":
             payload['source'] = ['aws.ec2']
             payload['detail-type'] = [
@@ -1097,9 +1089,11 @@ class CloudWatchEventSource(AWSEventBase):
             payload['detail'] = {"state": self.data.get('events', [])}
         elif event_type == "asg-instance-state":
             payload['source'] = ['aws.autoscaling']
-            events = []
-            for e in self.data.get('events', []):
-                events.append(self.ASG_EVENT_MAPPING.get(e, e))
+            events = [
+                self.ASG_EVENT_MAPPING.get(e, e)
+                for e in self.data.get('events', [])
+            ]
+
             payload['detail-type'] = events
         elif event_type == 'phd':
             payload['source'] = ['aws.health']
@@ -1120,11 +1114,8 @@ class CloudWatchEventSource(AWSEventBase):
             payload['detail-type'] = [
                 'Security Hub Findings - Custom Action',
                 'Security Hub Insight Results']
-        elif event_type == 'periodic':
-            pass
-        else:
-            raise ValueError(
-                "Unknown lambda event source type: %s" % event_type)
+        elif event_type != 'periodic':
+            raise ValueError(f"Unknown lambda event source type: {event_type}")
         if not payload:
             return None
         if self.data.get('pattern'):
@@ -1135,20 +1126,18 @@ class CloudWatchEventSource(AWSEventBase):
         params = dict(
             Name=func.event_name, Description=func.description, State='ENABLED')
 
-        pattern = self.render_event_pattern()
-        if pattern:
+        if pattern := self.render_event_pattern():
             params['EventPattern'] = pattern
-        schedule = self.data.get('schedule')
-        if schedule:
+        if schedule := self.data.get('schedule'):
             params['ScheduleExpression'] = schedule
 
         rule = self.get(func.event_name)
 
         if rule and self.delta(rule, params):
-            log.debug("Updating cwe rule for %s" % func.event_name)
+            log.debug(f"Updating cwe rule for {func.event_name}")
             response = self.client.put_rule(**params)
         elif not rule:
-            log.debug("Creating cwe rule for %s" % (self))
+            log.debug(f"Creating cwe rule for {self}")
             response = self.client.put_rule(**params)
         else:
             response = {'RuleArn': rule['Arn']}
@@ -1165,23 +1154,17 @@ class CloudWatchEventSource(AWSEventBase):
         except client.exceptions.ResourceConflictException:
             pass
 
-        # Add Targets
-        found = False
         response = RuleRetry(self.client.list_targets_by_rule, Rule=func.event_name)
         # CloudWatchE seems to be quite picky about function arns (no aliases/versions)
         func_arn = func.arn
 
         if func_arn.count(':') > 6:
             func_arn, version = func_arn.rsplit(':', 1)
-        for t in response['Targets']:
-            if func_arn == t['Arn']:
-                found = True
-
+        found = any(func_arn == t['Arn'] for t in response['Targets'])
         if found:
             return
 
-        log.debug('Creating cwe rule target for %s on func:%s' % (
-            self, func_arn))
+        log.debug(f'Creating cwe rule target for {self} on func:{func_arn}')
 
         self.client.put_targets(
             Rule=func.event_name, Targets=[{"Id": func.event_name, "Arn": func_arn}])
@@ -1207,9 +1190,9 @@ class CloudWatchEventSource(AWSEventBase):
         if self.get(func.event_name):
             log.info("Removing cwe targets and rule %s", func.event_name)
             try:
-                targets = self.client.list_targets_by_rule(
-                    Rule=func.event_name)['Targets']
-                if targets:
+                if targets := self.client.list_targets_by_rule(
+                    Rule=func.event_name
+                )['Targets']:
                     self.client.remove_targets(
                         Rule=func.event_name,
                         Ids=[t['Id'] for t in targets])
@@ -1234,19 +1217,13 @@ class SecurityHubAction:
             cwe_data, session_factory)
 
     def __repr__(self):
-        return "<SecurityHub Action %s>" % self.policy.name
+        return f"<SecurityHub Action {self.policy.name}>"
 
     def _get_arn(self):
-        return 'arn:aws:securityhub:%s:%s:action/custom/%s' % (
-            self.policy.options.region,
-            self.policy.options.account_id,
-            self.policy.name)
+        return f'arn:aws:securityhub:{self.policy.options.region}:{self.policy.options.account_id}:action/custom/{self.policy.name}'
 
     def delta(self, src, tgt):
-        for k in ('Name', 'Description'):
-            if src[k] != tgt[k]:
-                return True
-        return False
+        return any(src[k] != tgt[k] for k in ('Name', 'Description'))
 
     def get(self, name):
         client = local_session(self.session_factory).client('securityhub')
@@ -1254,8 +1231,7 @@ class SecurityHubAction:
         arn = self._get_arn()
         actions = client.describe_action_targets(
             ActionTargetArns=[arn]).get('ActionTargets', ())
-        assert len(actions) in (0, 1), "Found duplicate action %s" % (
-            actions,)
+        assert len(actions) in {0, 1}, f"Found duplicate action {actions}"
         action = actions and actions.pop() or None
         return {'event': subscriber, 'action': action}
 
@@ -1264,23 +1240,25 @@ class SecurityHubAction:
         client = local_session(self.session_factory).client('securityhub')
         action = self.get(func.event_name).get('action')
         arn = self._get_arn()
-        params = {'Name': (
-            self.policy.data.get('title') or (
-                "%s %s" % (self.policy.resource_type.split('.')[-1].title(),
-                          self.policy.name))),
-                  'Description': (
-                      self.policy.data.get('description') or
-                      self.policy.data.get('title') or
-                      self.policy.name),
-                  'Id': self.policy.name}
+        params = {
+            'Name': self.policy.data.get('title')
+            or f"{self.policy.resource_type.split('.')[-1].title()} {self.policy.name}",
+            'Description': (
+                self.policy.data.get('description')
+                or self.policy.data.get('title')
+                or self.policy.name
+            ),
+            'Id': self.policy.name,
+        }
+
         params['Description'] = params['Description'].strip()[:500]
         if not action:
-            log.debug('Creating SecurityHub Action %s' % arn)
+            log.debug(f'Creating SecurityHub Action {arn}')
             return client.create_action_target(
                 **params).get('ActionTargetArn')
         params.pop('Id')
         if self.delta(action, params):
-            log.debug('Updating SecurityHub Action %s' % arn)
+            log.debug(f'Updating SecurityHub Action {arn}')
             client.update_action_target(ActionTargetArn=arn, **params)
         return arn
 
@@ -1304,10 +1282,10 @@ class BucketLambdaNotification:
         self.bucket = bucket
 
     def delta(self, src, tgt):
-        for k in ['Id', 'LambdaFunctionArn', 'Events', 'Filters']:
-            if src.get(k) != tgt.get(k):
-                return True
-        return False
+        return any(
+            src.get(k) != tgt.get(k)
+            for k in ['Id', 'LambdaFunctionArn', 'Events', 'Filters']
+        )
 
     def _get_notifies(self, s3, func):
         notifies = s3.get_bucket_notification_configuration(
@@ -1351,7 +1329,7 @@ class BucketLambdaNotification:
             params['SourceAccount'] = self.data['account_s3']
             params['SourceArn'] = 'arn:aws:s3:::*'
         else:
-            params['SourceArn'] = 'arn:aws:s3:::%s' % self.bucket['Name']
+            params['SourceArn'] = f"arn:aws:s3:::{self.bucket['Name']}"
         try:
             lambda_client.add_permission(**params)
         except lambda_client.exceptions.ResourceConflictException:
@@ -1375,7 +1353,7 @@ class BucketLambdaNotification:
                 response = lambda_client.remove_permission(
                     FunctionName=func.name,
                     StatementId=self.bucket['Name'])
-                log.debug("Removed lambda permission result: %s" % response)
+                log.debug(f"Removed lambda permission result: {response}")
             except lambda_client.exceptions.ResourceNotFoundException:
                 pass
 
@@ -1403,8 +1381,7 @@ class CloudWatchLogSubscription:
     def add(self, func):
         lambda_client = self.session.client('lambda')
         for group in self.log_groups:
-            log.info(
-                "Creating subscription filter for %s" % group['logGroupName'])
+            log.info(f"Creating subscription filter for {group['logGroupName']}")
             region = group['arn'].split(':', 4)[3]
             try:
                 lambda_client.add_permission(
@@ -1412,7 +1389,9 @@ class CloudWatchLogSubscription:
                     StatementId=group['logGroupName'][1:].replace('/', '-'),
                     SourceArn=group['arn'],
                     Action='lambda:InvokeFunction',
-                    Principal='logs.%s.amazonaws.com' % region)
+                    Principal=f'logs.{region}.amazonaws.com',
+                )
+
                 log.debug("Added lambda ipo nvoke log group permission")
                 # iam eventual consistency and propagation
                 time.sleep(self.iam_delay)
@@ -1435,7 +1414,7 @@ class CloudWatchLogSubscription:
                     response = lambda_client.remove_permission(
                         FunctionName=func.name,
                         StatementId=group['logGroupName'][1:].replace('/', '-'))
-                    log.debug("Removed lambda permission result: %s" % response)
+                    log.debug(f"Removed lambda permission result: {response}")
                     found = True
                 except lambda_client.exceptions.ResourceNotFoundException:
                     pass
@@ -1474,10 +1453,7 @@ class SQSSubscription:
                 if (mapping['State'] == 'Enabled' or
                         mapping['BatchSize'] != self.batch_size):
                     continue
-                modified = True
-            else:
-                modified = True
-
+            modified = True
             if not modified:
                 return modified
 
@@ -1526,7 +1502,7 @@ class SNSSubscription:
     def _parse_arn(arn):
         parts = arn.split(':')
         region, topic_name = parts[3], parts[5]
-        statement_id = 'sns-topic-' + topic_name
+        statement_id = f'sns-topic-{topic_name}'
         return region, topic_name, statement_id
 
     def add(self, func):
@@ -1535,7 +1511,7 @@ class SNSSubscription:
         for arn in self.topic_arns:
             region, topic_name, statement_id = self._parse_arn(arn)
 
-            log.info("Subscribing %s to %s" % (func.name, topic_name))
+            log.info(f"Subscribing {func.name} to {topic_name}")
 
             # Add permission to lambda for sns invocation.
             try:
@@ -1570,7 +1546,7 @@ class SNSSubscription:
                     response = lambda_client.remove_permission(
                         FunctionName=func.name,
                         StatementId=statement_id)
-                    log.debug("Removed lambda permission result: %s" % response)
+                    log.debug(f"Removed lambda permission result: {response}")
                 except ClientError as e:
                     if e.response['Error']['Code'] != 'ResourceNotFoundException':
                         raise
@@ -1588,8 +1564,7 @@ class SNSSubscription:
                         try:
                             response = sns_client.unsubscribe(
                                 SubscriptionArn=subscription['SubscriptionArn'])
-                            log.debug("Unsubscribed %s from %s" %
-                                      (func.name, topic_name))
+                            log.debug(f"Unsubscribed {func.name} from {topic_name}")
                         except sns_client.exceptions.NotFoundException:
                             pass
                         raise Done  # break out of both for loops
@@ -1697,9 +1672,7 @@ class ConfigRule(AWSEventBase):
             self.client.describe_config_rules,
             ConfigRuleNames=[rule_name],
             NotFound="NoSuchConfigRuleException")
-        if not rules:
-            return rules
-        return rules['ConfigRules'][0]
+        return rules['ConfigRules'][0] if rules else rules
 
     @staticmethod
     def delta(rule, params):
@@ -1713,16 +1686,14 @@ class ConfigRule(AWSEventBase):
         if ('MaximumExecutionFrequency' in params and
                 rule['MaximumExecutionFrequency'] != params['MaximumExecutionFrequency']):
             return True
-        if rule.get('Description', '') != params.get('Description', ''):
-            return True
-        return False
+        return rule.get('Description', '') != params.get('Description', '')
 
     def add(self, func):
         rule = self.get(func.name)
         params = self.get_rule_params(func)
 
         if rule and self.delta(rule, params):
-            log.debug("Updating config rule for %s" % self)
+            log.debug(f"Updating config rule for {self}")
             rule.update(params)
             return LambdaRetry(self.client.put_config_rule, ConfigRule=rule)
         elif rule:
@@ -1739,7 +1710,7 @@ class ConfigRule(AWSEventBase):
         except client.exceptions.ResourceConflictException:
             pass
 
-        log.debug("Adding config rule for %s" % func.name)
+        log.debug(f"Adding config rule for {func.name}")
         return LambdaRetry(self.client.put_config_rule, ConfigRule=params)
 
     def remove(self, func, func_deleted=True):

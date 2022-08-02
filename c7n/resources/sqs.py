@@ -35,7 +35,7 @@ class DescribeQueue(DescribeSource):
                 if e.response['Error']['Code'] == 'AWS.SimpleQueueService.NonExistentQueue':
                     return
                 if e.response['Error']['Code'] == 'AccessDenied':
-                    self.manager.log.warning("Denied access to sqs %s" % r)
+                    self.manager.log.warning(f"Denied access to sqs {r}")
                     return
                 raise
             return queue
@@ -333,7 +333,7 @@ class SetEncryption(BaseAction):
                 QueueUrl=queue['QueueUrl'],
                 Attributes={'KmsMasterKeyId': key_id}
             )
-        except (client.exceptions.QueueDoesNotExist,) as e:
+        except client.exceptions.QueueDoesNotExist as e:
             self.log.exception(
                 "Exception modifying queue:\n %s" % e)
 
@@ -399,10 +399,7 @@ class DeadLetterFilter(Filter):
         all_resources = self.manager.get_resource_manager("sqs").resources()
         all_queue_arn_map = {r['QueueArn']: r for r in all_resources}
         queue_arn_map = {r['QueueArn']: r for r in resources}
-        has_redrive = []
-        for r in all_resources:
-            if r.get("RedrivePolicy"):
-                has_redrive.append(r['QueueArn'])
+        has_redrive = [r['QueueArn'] for r in all_resources if r.get("RedrivePolicy")]
         result = []
         # dead letter queues must exist in the same region and account as the
         # original queue so it should be safe to look for them in our existing

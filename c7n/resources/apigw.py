@@ -43,7 +43,7 @@ class RestAccount(ResourceManager):
         return ('apigateway:GET',)
 
     @classmethod
-    def has_arn(self):
+    def has_arn(cls):
         return False
 
     def get_model(self):
@@ -300,11 +300,12 @@ class RestStage(query.ChildResourceManager):
         return self._generate_arn
 
     def get_arns(self, resources):
-        arns = []
-        for r in resources:
-            arns.append(self.generate_arn('/restapis/' + r['restApiId'] +
-             '/stages/' + r[self.get_model().id]))
-        return arns
+        return [
+            self.generate_arn(
+                '/restapis/' + r['restApiId'] + '/stages/' + r[self.get_model().id]
+            )
+            for r in resources
+        ]
 
 
 @RestStage.action_registry.register('update')
@@ -367,13 +368,11 @@ class DeleteStage(BaseAction):
     def process(self, resources):
         client = utils.local_session(self.manager.session_factory).client('apigateway')
         for r in resources:
-            try:
+            with suppress(client.exceptions.NotFoundException):
                 self.manager.retry(
                     client.delete_stage,
                     restApiId=r['restApiId'],
                     stageName=r['stageName'])
-            except client.exceptions.NotFoundException:
-                pass
 
 
 @resources.register('rest-resource')
@@ -508,17 +507,16 @@ class WafV2Enabled(Filter):
             r_web_acl_arn = r.get('webAclArn')
             if state:
                 if target_acl_id is None and r_web_acl_arn and \
-                        r_web_acl_arn in waf_name_arn_map.values():
+                            r_web_acl_arn in waf_name_arn_map.values():
                     results.append(r)
                 elif target_acl_id and r_web_acl_arn == target_acl_id:
                     results.append(r)
-            else:
-                if target_acl_id is None and (
-                        not r_web_acl_arn or r_web_acl_arn and r_web_acl_arn
-                        not in waf_name_arn_map.values()):
-                    results.append(r)
-                elif target_acl_id and r_web_acl_arn != target_acl_id:
-                    results.append(r)
+            elif target_acl_id is None and (
+                not r_web_acl_arn or r_web_acl_arn not in waf_name_arn_map.values()
+            ):
+                results.append(r)
+            elif target_acl_id and r_web_acl_arn != target_acl_id:
+                results.append(r)
         return results
 
 
@@ -535,16 +533,13 @@ class SetWafv2(BaseAction):
             'state': {'type': 'boolean'}})
 
     def validate(self):
-        found = False
-        for f in self.manager.iter_filters():
-            if isinstance(f, WafV2Enabled):
-                found = True
-                break
+        found = any(isinstance(f, WafV2Enabled) for f in self.manager.iter_filters())
         if not found:
             # try to ensure idempotent usage
             raise PolicyValidationError(
-                "set-wafv2 should be used in conjunction with wafv2-enabled filter on %s" % (
-                    self.manager.data,))
+                f"set-wafv2 should be used in conjunction with wafv2-enabled filter on {self.manager.data}"
+            )
+
         return self
 
     def process(self, resources):
@@ -555,7 +550,7 @@ class SetWafv2(BaseAction):
         state = self.data.get('state', True)
 
         if state and target_acl_id not in name_id_map.values():
-            raise ValueError("invalid web acl: %s" % (target_acl_id))
+            raise ValueError(f"invalid web acl: {target_acl_id}")
 
         client = utils.local_session(self.manager.session_factory).client('wafv2')
 
@@ -611,10 +606,9 @@ class FilterRestIntegration(ValueFilter):
             tasks = []
             for r in resources:
                 r_method_set = method_set
-                if method_set == 'all':
+                if r_method_set == 'all':
                     r_method_set = r.get('resourceMethods', {}).keys()
-                for m in r_method_set:
-                    tasks.append((r, m))
+                tasks.extend((r, m) for m in r_method_set)
             for task_set in utils.chunks(tasks, 20):
                 futures[w.submit(
                     self.process_task_set, client, task_set)] = task_set
@@ -625,8 +619,9 @@ class FilterRestIntegration(ValueFilter):
                 if f.exception():
                     self.manager.log.warning(
                         "Error retrieving integrations on resources %s",
-                        ["%s:%s" % (r['restApiId'], r['path'])
-                         for r, mt in task_set])
+                        [f"{r['restApiId']}:{r['path']}" for r, mt in task_set],
+                    )
+
                     continue
 
                 for i in f.result():
@@ -640,7 +635,7 @@ class FilterRestIntegration(ValueFilter):
     def process_task_set(self, client, task_set):
         results = []
         for r, m in task_set:
-            try:
+            with suppress(ClientError):
                 integration = client.get_integration(
                     restApiId=r['restApiId'],
                     resourceId=r['id'],
@@ -650,10 +645,6 @@ class FilterRestIntegration(ValueFilter):
                 integration['resourceId'] = r['id']
                 integration['resourceHttpMethod'] = m
                 results.append(integration)
-            except ClientError as e:
-                if e.response['Error']['Code'] == 'NotFoundException':
-                    pass
-
         return results
 
 
@@ -687,11 +678,11 @@ class UpdateRestIntegration(BaseAction):
     permissions = ('apigateway:PATCH',)
 
     def validate(self):
-        found = False
-        for f in self.manager.iter_filters():
-            if isinstance(f, FilterRestIntegration):
-                found = True
-                break
+        found = any(
+            isinstance(f, FilterRestIntegration)
+            for f in self.manager.iter_filters()
+        )
+
         if not found:
             raise ValueError(
                 ("update-integration action requires ",
@@ -788,10 +779,9 @@ class FilterRestMethod(ValueFilter):
             tasks = []
             for r in resources:
                 r_method_set = method_set
-                if method_set == 'all':
+                if r_method_set == 'all':
                     r_method_set = r.get('resourceMethods', {}).keys()
-                for m in r_method_set:
-                    tasks.append((r, m))
+                tasks.extend((r, m) for m in r_method_set)
             for task_set in utils.chunks(tasks, 20):
                 futures[w.submit(
                     self.process_task_set, client, task_set)] = task_set
@@ -801,8 +791,9 @@ class FilterRestMethod(ValueFilter):
                 if f.exception():
                     self.manager.log.warning(
                         "Error retrieving methods on resources %s",
-                        ["%s:%s" % (r['restApiId'], r['path'])
-                         for r, mt in task_set])
+                        [f"{r['restApiId']}:{r['path']}" for r, mt in task_set],
+                    )
+
                     continue
                 for m in f.result():
                     if self.match(m):
@@ -856,11 +847,10 @@ class UpdateRestMethod(BaseAction):
     permissions = ('apigateway:GET',)
 
     def validate(self):
-        found = False
-        for f in self.manager.iter_filters():
-            if isinstance(f, FilterRestMethod):
-                found = True
-                break
+        found = any(
+            isinstance(f, FilterRestMethod) for f in self.manager.iter_filters()
+        )
+
         if not found:
             raise ValueError(
                 ("update-method action requires ",
@@ -897,7 +887,7 @@ class CustomDomainName(query.QueryResourceManager):
         return ('apigateway:GET',)
 
     @classmethod
-    def has_arn(self):
+    def has_arn(cls):
         return False
 
 

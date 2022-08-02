@@ -65,7 +65,7 @@ class DiskSource:
     def validate(self):
         for q in self.queries:
             if not os.path.exists(q["path"]):
-                raise PolicyValidationError("invalid disk path %s" % q)
+                raise PolicyValidationError(f"invalid disk path {q}")
             if os.path.isdir(q["path"]) and "glob" not in q:
                 raise PolicyValidationError("glob pattern required for dir")
 
@@ -74,8 +74,7 @@ class DiskSource:
             for collection in self.scan_path(
                 path=q["path"], resource_key=q.get("key"), glob=q.get("glob")
             ):
-                for p in collection:
-                    yield p
+                yield from collection
 
     def scan_path(self, path, glob, resource_key):
         if os.path.isfile(path):
@@ -91,8 +90,9 @@ class DiskSource:
             data = jmespath.search(resource_key, data)
         if not isinstance(data, list):
             raise PolicyExecutionError(
-                "found disk records at %s in non list format %s" % (path, type(data))
+                f"found disk records at {path} in non list format {type(data)}"
             )
+
         return DataFile(path, resource_key, data)
 
 
@@ -118,7 +118,7 @@ class Data(ResourceManager):
 
     def validate(self):
         if self.data.get("source", "disk") not in self.source_mapping:
-            raise PolicyValidationError("invalid source %s" % self.data["source"])
+            raise PolicyValidationError(f'invalid source {self.data["source"]}')
         self.get_source().validate()
 
     def get_resources(self, resource_ids):

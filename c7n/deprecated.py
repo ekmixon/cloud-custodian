@@ -127,9 +127,7 @@ class DeprecatedField(Deprecation):
         return f"field '{name}' has been deprecated (replaced by {replacement})"
 
     def check(self, data):
-        if self.name in data:
-            return True
-        return False
+        return self.name in data
 
 
 class DeprecatedElement(Deprecation):
@@ -154,7 +152,7 @@ class DeprecatedOptionality(Deprecation):
 
     def check(self, data):
         # check to see that they haven't specified the value
-        return all([key not in data for key in self.fields])
+        return all(key not in data for key in self.fields)
 
     def __str__(self):
         if len(self.fields) > 1:
@@ -246,11 +244,7 @@ class Report:
             return True
         if len(self.conditions) > 0:
             return True
-        if len(self.resource) > 0:
-            return True
-        if len(self.mode) > 0:
-            return True
-        return False
+        return True if len(self.resource) > 0 else len(self.mode) > 0
 
     def format(self, source_locator=None, footnotes=None):
         """Format the report for output.
@@ -260,8 +254,7 @@ class Report:
         """
         location = ""
         if source_locator is not None:
-            file_and_line = source_locator.find(self.policy_name)
-            if file_and_line:
+            if file_and_line := source_locator.find(self.policy_name):
                 location = f" ({file_and_line})"
         lines = [f"policy '{self.policy_name}'{location}"]
         lines.extend(self.section('attributes', self.policy_fields, footnotes))
@@ -278,9 +271,8 @@ class Report:
             return ()
 
         def footnote(d):
-            if footnotes is None:
-                return ""
-            return footnotes.note(d)
+            return "" if footnotes is None else footnotes.note(d)
+
         result = [f"  {name}:"]
         result.extend([f"    {d}{footnote(d)}" for d in deprecations])
         return result
@@ -315,9 +307,7 @@ class Footnotes:
             self.seen[d.id] = ref
         else:
             ref = self.seen[d.id]
-        if ref is None:
-            return ""
-        return f" [{ref}]"
+        return "" if ref is None else f" [{ref}]"
 
     def _note(self, d):
         removed = d.remove_text
@@ -334,7 +324,5 @@ class Footnotes:
         return text
 
     def __call__(self):
-        lines = []
-        for i, note in enumerate(self.notes, 1):
-            lines.append(f"[{i}] {note}")
+        lines = [f"[{i}] {note}" for i, note in enumerate(self.notes, 1)]
         return "\n".join(lines)

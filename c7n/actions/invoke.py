@@ -96,7 +96,7 @@ class LambdaInvoke(EventAction):
         return results
 
     @classmethod
-    def register_resources(klass, registry, resource_class):
+    def register_resources(cls, registry, resource_class):
         if 'invoke-lambda' not in resource_class.action_registry:
             resource_class.action_registry.register('invoke-lambda', LambdaInvoke)
 

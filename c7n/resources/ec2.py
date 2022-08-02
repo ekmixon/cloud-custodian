@@ -63,14 +63,8 @@ class DescribeEC2(query.DescribeSource):
         # AWOL detector, so we don't make extraneous api calls.
         resource_count = len(resources)
         search_count = min(int(resource_count % 0.05) + 1, 5)
-        if search_count > resource_count:
-            search_count = resource_count
-        found = False
-        for r in random.sample(resources, search_count):
-            if 'Tags' in r:
-                found = True
-                break
-
+        search_count = min(search_count, resource_count)
+        found = any('Tags' in r for r in random.sample(resources, search_count))
         if found:
             return resources
 
@@ -222,13 +216,15 @@ class StateTransitionAge(AgeFilter):
         days={'type': 'number'})
 
     def get_resource_date(self, i):
-        v = i.get('StateTransitionReason')
-        if not v:
+        if v := i.get('StateTransitionReason'):
+            return (
+                parse(dates[0][1:-1])
+                if (dates := self.RE_PARSE_AGE.findall(v))
+                else None
+            )
+
+        else:
             return None
-        dates = self.RE_PARSE_AGE.findall(v)
-        if dates:
-            return parse(dates[0][1:-1])
-        return None
 
 
 @filters.register('ebs')
@@ -272,10 +268,12 @@ class AttachedVolume(ValueFilter):
         for instance_set in utils.chunks(resources, 200):
             volume_ids = []
             for i in instance_set:
-                for bd in i.get('BlockDeviceMappings', ()):
-                    if 'Ebs' not in bd:
-                        continue
-                    volume_ids.append(bd['Ebs']['VolumeId'])
+                volume_ids.extend(
+                    bd['Ebs']['VolumeId']
+                    for bd in i.get('BlockDeviceMappings', ())
+                    if 'Ebs' in bd
+                )
+
             for v in manager.get_resources(volume_ids):
                 if not v['Attachments']:
                     continue
@@ -365,10 +363,9 @@ class InstanceImageBase:
     def get_local_image_mapping(self, image_ids):
         base_image_map = self.get_base_image_mapping()
         resources = {i: base_image_map[i] for i in image_ids if i in base_image_map}
-        missing = list(set(image_ids) - set(resources.keys()))
-        if missing:
+        if missing := list(set(image_ids) - set(resources.keys())):
             loaded = self.manager.get_resource_manager('ami').get_resources(missing, False)
-            resources.update({image['ImageId']: image for image in loaded})
+            resources |= {image['ImageId']: image for image in loaded}
         return resources
 
 
@@ -406,8 +403,7 @@ class ImageAge(AgeFilter, InstanceImageBase):
         return super(ImageAge, self).process(resources, event)
 
     def get_resource_date(self, i):
-        image = self.get_instance_image(i)
-        if image:
+        if image := self.get_instance_image(i):
             return parse(image['CreationDate'])
         else:
             return parse("2000-01-01T01:01:01.000Z")
@@ -431,8 +427,9 @@ class InstanceImage(ValueFilter, InstanceImageBase):
         # Finally, if we have no image...
         if not image:
             self.log.warning(
-                "Could not locate image for instance:%s ami:%s" % (
-                    i['InstanceId'], i["ImageId"]))
+                f"""Could not locate image for instance:{i['InstanceId']} ami:{i["ImageId"]}"""
+            )
+
             # Match instead on empty skeleton?
             return False
         return self.match(image)
@@ -514,9 +511,7 @@ class EC2NetworkLocation(net_filters.NetworkLocation):
 
     def process(self, resources, event=None):
         resources = self.filter_resources(resources, 'State.Name', self.valid_origin_states)
-        if not resources:
-            return []
-        return super(EC2NetworkLocation, self).process(resources)
+        return super(EC2NetworkLocation, self).process(resources) if resources else []
 
 
 @filters.register('onhour')
@@ -614,12 +609,14 @@ class EphemeralInstanceFilter(Filter):
 
     @staticmethod
     def is_ephemeral(i):
-        for bd in i.get('BlockDeviceMappings', []):
-            if bd['DeviceName'] in ('/dev/sda1', '/dev/xvda', 'xvda'):
-                if 'Ebs' in bd:
-                    return False
-                return True
-        return True
+        return next(
+            (
+                'Ebs' not in bd
+                for bd in i.get('BlockDeviceMappings', [])
+                if bd['DeviceName'] in ('/dev/sda1', '/dev/xvda', 'xvda')
+            ),
+            True,
+        )
 
 
 @filters.register('instance-uptime')
@@ -729,11 +726,12 @@ class UserData(ValueFilter):
         client = utils.local_session(self.manager.session_factory).client('ec2')
         results = []
         with self.executor_factory(max_workers=3) as w:
-            futures = {}
-            for instance_set in utils.chunks(resources, self.batch_size):
-                futures[w.submit(
-                    self.process_instance_set,
-                    client, instance_set)] = instance_set
+            futures = {
+                w.submit(
+                    self.process_instance_set, client, instance_set
+                ): instance_set
+                for instance_set in utils.chunks(resources, self.batch_size)
+            }
 
             for f in as_completed(futures):
                 if f.exception():
@@ -802,10 +800,7 @@ class SingletonFilter(Filter):
             self.filter_resources(instances, 'State.Name', self.valid_origin_states))
 
     def __call__(self, i):
-        if self.in_asg(i):
-            return False
-        else:
-            return not self.has_recover_alarm(i)
+        return False if self.in_asg(i) else not self.has_recover_alarm(i)
 
     def has_recover_alarm(self, i):
         client = utils.local_session(self.manager.session_factory).client('cloudwatch')
@@ -862,14 +857,10 @@ class SsmStatus(ValueFilter):
 
     def process(self, resources, event=None):
         client = utils.local_session(self.manager.session_factory).client('ssm')
-        results = []
         for resource_set in utils.chunks(
                 [r for r in resources if self.annotation not in r], 50):
             self.process_resource_set(client, resource_set)
-        for r in resources:
-            if self.match(r[self.annotation]):
-                results.append(r)
-        return results
+        return [r for r in resources if self.match(r[self.annotation])]
 
     def process_resource_set(self, client, resources):
         instance_ids = [i['InstanceId'] for i in resources]
@@ -956,8 +947,7 @@ class SsmCompliance(Filter):
                 'Type': 'EQUAL'
             }
         ]
-        severity = self.data.get('severity')
-        if severity:
+        if severity := self.data.get('severity'):
             filters.append(
                 {
                     'Key': 'OverallSeverity',
@@ -980,8 +970,7 @@ class SsmCompliance(Filter):
 
         results = []
         for r in resources:
-            result = resource_map.get(r['InstanceId'])
-            if result:
+            if result := resource_map.get(r['InstanceId']):
                 r[self.annotation] = result
                 results.append(r)
 
@@ -1112,7 +1101,9 @@ class SetMetadataServerAccess(BaseAction):
             allowed_values = list(self.AllowedValues[k])
             allowed_values.remove(v)
             resources = self.filter_resources(
-                resources, 'MetadataOptions.%s' % k, allowed_values)
+                resources, f'MetadataOptions.{k}', allowed_values
+            )
+
 
         if not resources:
             return
@@ -1155,15 +1146,12 @@ class InstanceFinding(PostFinding):
 
         instance = {
             "Type": self.resource_type,
-            "Id": "arn:{}:ec2:{}:{}:instance/{}".format(
-                utils.REGION_PARTITION_MAP.get(self.manager.config.region, 'aws'),
-                self.manager.config.region,
-                self.manager.config.account_id,
-                r["InstanceId"]),
+            "Id": f"""arn:{utils.REGION_PARTITION_MAP.get(self.manager.config.region, 'aws')}:ec2:{self.manager.config.region}:{self.manager.config.account_id}:instance/{r["InstanceId"]}""",
             "Region": self.manager.config.region,
             "Tags": {t["Key"]: t["Value"] for t in r.get("Tags", [])},
             "Details": {self.resource_type: filter_empty(details)},
         }
+
 
         instance = filter_empty(instance)
         return instance
@@ -1212,9 +1200,10 @@ class Start(BaseAction):
             for izone, z_instances in utils.group_by(
                     t_instances, 'Placement.AvailabilityZone').items():
                 for batch in utils.chunks(z_instances, self.batch_size):
-                    fails = self.process_instance_set(client, batch, itype, izone)
-                    if fails:
-                        failures["%s %s" % (itype, izone)] = [i['InstanceId'] for i in batch]
+                    if fails := self.process_instance_set(
+                        client, batch, itype, izone
+                    ):
+                        failures[f"{itype} {izone}"] = [i['InstanceId'] for i in batch]
 
         if failures:
             fail_count = sum(map(len, failures.values()))
@@ -1245,12 +1234,10 @@ class Start(BaseAction):
 
 def extract_instance_id(state_error):
     "Extract an instance id from an error"
-    instance_id = None
     match = RE_ERROR_INSTANCE_ID.search(str(state_error))
-    if match:
-        instance_id = match.groupdict().get('instance_id')
+    instance_id = match.groupdict().get('instance_id') if match else None
     if match is None or instance_id is None:
-        raise ValueError("Could not extract instance id from error: %s" % state_error)
+        raise ValueError(f"Could not extract instance id from error: {state_error}")
     return instance_id
 
 
@@ -1318,8 +1305,7 @@ class Resize(BaseAction):
             self.manager.session_factory).client('ec2')
 
         for i in instance_set:
-            self.log.debug(
-                "resizing %s %s" % (i['InstanceId'], i['InstanceType']))
+            self.log.debug(f"resizing {i['InstanceId']} {i['InstanceType']}")
             new_type = type_map.get(i['InstanceType'], default_type)
             if new_type == i['InstanceType']:
                 continue
@@ -1468,8 +1454,7 @@ class Reboot(BaseAction):
         failures = {}
 
         for batch in utils.chunks(instances, self.batch_size):
-            fails = self.process_instance_set(client, batch)
-            if fails:
+            if fails := self.process_instance_set(client, batch):
                 failures = [i['InstanceId'] for i in batch]
 
         if failures:
@@ -1612,10 +1597,11 @@ class Snapshot(BaseAction):
         client = utils.local_session(self.manager.session_factory).client('ec2')
         err = None
         with self.executor_factory(max_workers=2) as w:
-            futures = {}
-            for resource in resources:
-                futures[w.submit(
-                    self.process_volume_set, client, resource)] = resource
+            futures = {
+                w.submit(self.process_volume_set, client, resource): resource
+                for resource in resources
+            }
+
             for f in as_completed(futures):
                 if f.exception():
                     err = f.exception()
@@ -1730,28 +1716,25 @@ class AutorecoverAlarm(BaseAction):
             self.manager.session_factory).client('cloudwatch')
         for i in instances:
             client.put_metric_alarm(
-                AlarmName='recover-{}'.format(i['InstanceId']),
-                AlarmDescription='Auto Recover {}'.format(i['InstanceId']),
+                AlarmName=f"recover-{i['InstanceId']}",
+                AlarmDescription=f"Auto Recover {i['InstanceId']}",
                 ActionsEnabled=True,
                 AlarmActions=[
                     'arn:{}:automate:{}:ec2:recover'.format(
                         utils.REGION_PARTITION_MAP.get(
-                            self.manager.config.region, 'aws'),
-                        i['Placement']['AvailabilityZone'][:-1])
+                            self.manager.config.region, 'aws'
+                        ),
+                        i['Placement']['AvailabilityZone'][:-1],
+                    )
                 ],
                 MetricName='StatusCheckFailed_System',
                 Namespace='AWS/EC2',
                 Statistic='Minimum',
-                Dimensions=[
-                    {
-                        'Name': 'InstanceId',
-                        'Value': i['InstanceId']
-                    }
-                ],
+                Dimensions=[{'Name': 'InstanceId', 'Value': i['InstanceId']}],
                 Period=60,
                 EvaluationPeriods=2,
                 Threshold=0,
-                ComparisonOperator='GreaterThanThreshold'
+                ComparisonOperator='GreaterThanThreshold',
             )
 
 
@@ -1793,9 +1776,9 @@ class SetInstanceProfile(BaseAction):
             return
         client = utils.local_session(self.manager.session_factory).client('ec2')
         profile_name = self.data.get('name')
-        profile_instances = [i for i in instances if i.get('IamInstanceProfile')]
-
-        if profile_instances:
+        if profile_instances := [
+            i for i in instances if i.get('IamInstanceProfile')
+        ]:
             associations = {
                 a['InstanceId']: (a['AssociationId'], a['IamInstanceProfile']['Arn'])
                 for a in client.describe_iam_instance_profile_associations(
@@ -1820,7 +1803,7 @@ class SetInstanceProfile(BaseAction):
             p_assoc_id, p_arn = associations[i['InstanceId']]
 
             # Already associated to target profile, skip
-            if profile_name and p_arn.endswith('/%s' % profile_name):
+            if profile_name and p_arn.endswith(f'/{profile_name}'):
                 continue
 
             if profile_name is None:
@@ -1915,15 +1898,17 @@ class PropagateSpotTags(BaseAction):
             instance_tags = {t['Key']: t['Value'] for t in i.get('Tags', [])}
             # We may overwrite tags, but if the operation changes no tag,
             # we will not proceed.
-            for k, v in request_tags.items():
-                if k not in instance_tags or instance_tags[k] != v:
-                    update_instances.append(i['InstanceId'])
+            update_instances.extend(
+                i['InstanceId']
+                for k, v in request_tags.items()
+                if k not in instance_tags or instance_tags[k] != v
+            )
 
             if len(set(instance_tags) | set(request_tags)) > self.MAX_TAG_COUNT:
                 self.log.warning(
-                    "action:%s instance:%s too many tags to copy (> 50)" % (
-                        self.__class__.__name__.lower(),
-                        i['InstanceId']))
+                    f"action:{self.__class__.__name__.lower()} instance:{i['InstanceId']} too many tags to copy (> 50)"
+                )
+
                 continue
 
         for iset in utils.chunks(update_instances, 20):
@@ -1972,8 +1957,7 @@ class QueryFilter:
         results = []
         for d in data:
             if not isinstance(d, dict):
-                raise ValueError(
-                    "EC2 Query Filter Invalid structure %s" % d)
+                raise ValueError(f"EC2 Query Filter Invalid structure {d}")
             results.append(cls(d).validate())
         return results
 
@@ -1983,16 +1967,17 @@ class QueryFilter:
         self.value = None
 
     def validate(self):
-        if not len(list(self.data.keys())) == 1:
-            raise PolicyValidationError(
-                "EC2 Query Filter Invalid %s" % self.data)
+        if len(list(self.data.keys())) != 1:
+            raise PolicyValidationError(f"EC2 Query Filter Invalid {self.data}")
         self.key = list(self.data.keys())[0]
         self.value = list(self.data.values())[0]
 
         if self.key not in EC2_VALID_FILTERS and not self.key.startswith(
                 'tag:'):
             raise PolicyValidationError(
-                "EC2 Query Filter invalid filter name %s" % (self.data))
+                f"EC2 Query Filter invalid filter name {self.data}"
+            )
+
 
         if self.value is None:
             raise PolicyValidationError(
@@ -2058,8 +2043,11 @@ class InstanceAttribute(ValueFilter):
     def process(self, resources, event=None):
         attribute = self.data['attribute']
         self.get_instance_attribute(resources, attribute)
-        return [resource for resource in resources
-                if self.match(resource['c7n:attribute-%s' % attribute])]
+        return [
+            resource
+            for resource in resources
+            if self.match(resource[f'c7n:attribute-{attribute}'])
+        ]
 
     def get_instance_attribute(self, resources, attribute):
         client = utils.local_session(
@@ -2074,8 +2062,7 @@ class InstanceAttribute(ValueFilter):
             keys = list(fetched_attribute.keys())
             keys.remove('ResponseMetadata')
             keys.remove('InstanceId')
-            resource['c7n:attribute-%s' % attribute] = fetched_attribute[
-                keys[0]]
+            resource[f'c7n:attribute-{attribute}'] = fetched_attribute[keys[0]]
 
 
 @resources.register('launch-template-version')
@@ -2238,7 +2225,7 @@ class AutoscalingSpotFleetRequest(AutoscalingBase):
     scalable_dimension = 'ec2:spot-fleet-request:TargetCapacity'
 
     def get_resource_id(self, resource):
-        return 'spot-fleet-request/%s' % resource['SpotFleetRequestId']
+        return f"spot-fleet-request/{resource['SpotFleetRequestId']}"
 
     def get_resource_tag(self, resource, key):
         if 'Tags' in resource:

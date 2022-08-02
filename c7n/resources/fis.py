@@ -31,8 +31,7 @@ class ExperimentTemplate(QueryResourceManager):
     def get_arns(self, resources):
         partition = get_partition(self.region)
         return [
-            "arn:%s:fis:%s:%s:experiment-template/%s"
-            % (partition, self.region, self.account_id, r['id'])
+            f"arn:{partition}:fis:{self.region}:{self.account_id}:experiment-template/{r['id']}"
             for r in resources
         ]
 

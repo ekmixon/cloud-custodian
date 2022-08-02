@@ -41,8 +41,9 @@ class Missing(Filter):
                 session_factory=self.manager.session_factory)
         if not collection:
             raise PolicyValidationError(
-                "policy %s missing filter empty embedded policy" % (
-                    self.manager.ctx.policy.name))
+                f"policy {self.manager.ctx.policy.name} missing filter empty embedded policy"
+            )
+
         self.embedded_policy = list(collection).pop()
         self.embedded_policy.validate()
         return self
@@ -54,6 +55,4 @@ class Missing(Filter):
         if not self.embedded_policy.is_runnable():
             return []
 
-        if self.embedded_policy.poll():
-            return []
-        return resources
+        return [] if self.embedded_policy.poll() else resources

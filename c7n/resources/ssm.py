@@ -117,11 +117,7 @@ class SendCommand(Action):
         if self.manager.type != 'ec2':
             return
 
-        found = False
-        for f in self.manager.iter_filters():
-            if f.type == 'ssm':
-                found = True
-                break
+        found = any(f.type == 'ssm' for f in self.manager.iter_filters())
         if not found:
             raise PolicyValidationError(
                 "send-command requires use of ssm filter on ec2 resources")
@@ -220,12 +216,13 @@ class OpsItem(QueryResourceManager):
     def resource_query(self):
         filters = []
         for q in self.data.get('query', ()):
-            if (not isinstance(q, dict) or
-                not set(q.keys()) == {'Key', 'Values', 'Operator'} or
-                q['Key'] not in self.QueryKeys or
-                    q['Operator'] not in self.QueryOperators):
-                raise PolicyValidationError(
-                    "invalid ops-item query %s" % self.data['query'])
+            if (
+                not isinstance(q, dict)
+                or set(q.keys()) != {'Key', 'Values', 'Operator'}
+                or q['Key'] not in self.QueryKeys
+                or q['Operator'] not in self.QueryOperators
+            ):
+                raise PolicyValidationError(f"invalid ops-item query {self.data['query']}")
             filters.append(q)
         return {'OpsItemFilters': filters}
 
@@ -277,10 +274,7 @@ class UpdateOpsItem(Action):
 
         modified = []
         for r in resources:
-            for k, v in attrs.items():
-                if k not in r or r[k] != v:
-                    modified.append(r)
-
+            modified.extend(r for k, v in attrs.items() if k not in r or r[k] != v)
         self.log.debug("Updating %d of %d ops items", len(modified), len(resources))
         client = local_session(self.manager.session_factory).client('ssm')
         for m in modified:
@@ -337,9 +331,14 @@ class OpsItemFilter(Filter):
         return results
 
     def get_query_filter(self, resources):
-        q = []
-        q.append({'Key': 'Status', 'Operator': 'Equal',
-                  'Values': self.data.get('status', ('Open',))})
+        q = [
+            {
+                'Key': 'Status',
+                'Operator': 'Equal',
+                'Values': self.data.get('status', ('Open',)),
+            }
+        ]
+
         if self.data.get('priority'):
             q.append({'Key': 'Priority', 'Operator': 'Equal',
                       'Values': list(map(str, self.data['priority']))})
@@ -530,7 +529,7 @@ class PostItem(Action):
                 remainder.append(a)
 
         for i in items:
-            if not i['OpsItemId'] in updated:
+            if i['OpsItemId'] not in updated:
                 continue
             i = dict(i)
             for k in ('CreatedBy', 'CreatedTime', 'Source', 'LastModifiedBy',
@@ -544,11 +543,10 @@ class PostItem(Action):
 
     def get_item_template(self):
         title = self.data.get('title', self.manager.data['name']).strip()
-        dedup = ("%s %s %s %s" % (
-            title,
-            self.manager.type,
-            self.manager.config.region,
-            self.manager.config.account_id)).encode('utf8')
+        dedup = f"{title} {self.manager.type} {self.manager.config.region} {self.manager.config.account_id}".encode(
+            'utf8'
+        )
+
         # size restrictions on this value is 4-20, digest is 32
         dedup = hashlib.md5(dedup).hexdigest()[:20]  # nosec nosemgrep
 
@@ -640,10 +638,11 @@ class SSMDocumentCrossAccount(CrossAccountAccessFilter):
         results = []
         client = local_session(self.manager.session_factory).client('ssm')
         with self.executor_factory(max_workers=3) as w:
-            futures = []
-            for resource_set in chunks(resources, 10):
-                futures.append(w.submit(
-                    self.process_resource_set, client, resource_set))
+            futures = [
+                w.submit(self.process_resource_set, client, resource_set)
+                for resource_set in chunks(resources, 10)
+            ]
+
             for f in as_completed(futures):
                 if f.exception():
                     self.log.error(
@@ -663,8 +662,7 @@ class SSMDocumentCrossAccount(CrossAccountAccessFilter):
                 ignore_err_codes=('InvalidDocument',))['AccountSharingInfoList']
             shared_accounts = {
                 g.get('AccountId') for g in attrs}
-            delta_accounts = shared_accounts.difference(self.accounts)
-            if delta_accounts:
+            if delta_accounts := shared_accounts.difference(self.accounts):
                 r['c7n:CrossAccountViolations'] = list(delta_accounts)
                 results.append(r)
         return results
@@ -768,22 +766,21 @@ class DeleteSSMDocument(Action):
             try:
                 client.delete_document(Name=r['Name'], Force=True)
             except client.exceptions.InvalidDocumentOperation as e:
-                if self.data.get('force', False):
-                    response = client.describe_document_permission(
-                        Name=r['Name'],
-                        PermissionType='Share'
-                    )
-                    client.modify_document_permission(
-                        Name=r['Name'],
-                        PermissionType='Share',
-                        AccountIdsToRemove=response.get('AccountIds', [])
-                    )
-                    client.delete_document(
-                        Name=r['Name'],
-                        Force=True
-                    )
-                else:
+                if not self.data.get('force', False):
                     raise(e)
+                response = client.describe_document_permission(
+                    Name=r['Name'],
+                    PermissionType='Share'
+                )
+                client.modify_document_permission(
+                    Name=r['Name'],
+                    PermissionType='Share',
+                    AccountIdsToRemove=response.get('AccountIds', [])
+                )
+                client.delete_document(
+                    Name=r['Name'],
+                    Force=True
+                )
 
 
 @resources.register('ssm-data-sync')

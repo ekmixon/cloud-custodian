@@ -43,7 +43,7 @@ class Element:
         resource_count = len(resources)
         search_expr = key_expr
         if not search_expr.startswith('[].'):
-            search_expr = '[].' + key_expr
+            search_expr = f'[].{key_expr}'
         results = [r for value, r in zip(
             jmespath.search(search_expr, resources), resources)
             if value in allowed_values]
@@ -56,4 +56,4 @@ class Element:
 
     def get_deprecations(self):
         """Return any matching deprecations for the policy fields itself."""
-        return deprecated.check_deprecations(self, self.type + ":")
+        return deprecated.check_deprecations(self, f"{self.type}:")

@@ -37,10 +37,7 @@ class Lookup:
 
     @staticmethod
     def extract(source, data=None):
-        if Lookup.is_lookup(source):
-            return Lookup.get_value(source, data)
-        else:
-            return source
+        return Lookup.get_value(source, data) if Lookup.is_lookup(source) else source
 
     @staticmethod
     def is_lookup(source):
@@ -58,6 +55,6 @@ class Lookup:
         if value is not None:
             return value
         if 'default-value' not in source:
-            raise Exception('Lookup for key, {}, returned None'.format(source['key']))
+            raise Exception(f"Lookup for key, {source['key']}, returned None")
         else:
             return source['default-value']

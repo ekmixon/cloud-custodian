@@ -96,7 +96,7 @@ class CloudWatchEvents:
         if k in cls.trail_events:
             v = dict(cls.trail_events[k])
             if isinstance(v['ids'], str):
-                v['ids'] = e = jmespath.compile('detail.%s' % v['ids'])
+                v['ids'] = e = jmespath.compile(f"detail.{v['ids']}")
                 cls.trail_events[k]['ids'] = e
             return v
 
@@ -110,9 +110,7 @@ class CloudWatchEvents:
         event_source = event['detail']['eventSource']
         for e in mode.get('events', []):
             if not isinstance(e, dict):
-                # Check if we have a short cut / alias
-                info = CloudWatchEvents.match(event)
-                if info:
+                if info := CloudWatchEvents.match(event):
                     return info['ids'].search(event)
                 continue
             if event_name != e.get('event'):

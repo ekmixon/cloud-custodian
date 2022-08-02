@@ -180,17 +180,15 @@ class SetRedshiftLogging(BaseAction):
         required=('state',))
 
     def get_permissions(self):
-        perms = ('redshift:EnableLogging',)
         if self.data.get('state') == 'disabled':
             return ('redshift:DisableLogging',)
-        return perms
+        return ('redshift:EnableLogging',)
 
     def validate(self):
-        if self.data.get('state') == 'enabled':
-            if 'bucket' not in self.data:
-                raise PolicyValidationError((
-                    "redshift logging enablement requires `bucket` "
-                    "and `prefix` specification on %s" % (self.manager.data,)))
+        if self.data.get('state') == 'enabled' and 'bucket' not in self.data:
+            raise PolicyValidationError((
+                "redshift logging enablement requires `bucket` "
+                "and `prefix` specification on %s" % (self.manager.data,)))
         return self
 
     def process(self, resources):
@@ -296,7 +294,7 @@ class Parameter(ValueFilter):
     def __call__(self, db):
         params = {}
         for pg in db['ClusterParameterGroups']:
-            params.update(self.group_params[pg['ParameterGroupName']])
+            params |= self.group_params[pg['ParameterGroupName']]
         return self.match(params)
 
 
@@ -336,10 +334,11 @@ class Delete(BaseAction):
 
     def process(self, clusters):
         with self.executor_factory(max_workers=2) as w:
-            futures = []
-            for db_set in chunks(clusters, size=5):
-                futures.append(
-                    w.submit(self.process_db_set, db_set))
+            futures = [
+                w.submit(self.process_db_set, db_set)
+                for db_set in chunks(clusters, size=5)
+            ]
+
             for f in as_completed(futures):
                 if f.exception():
                     self.log.error(
@@ -396,11 +395,11 @@ class RetentionWindow(BaseAction):
 
     def process(self, clusters):
         with self.executor_factory(max_workers=2) as w:
-            futures = []
-            for cluster in clusters:
-                futures.append(w.submit(
-                    self.process_snapshot_retention,
-                    cluster))
+            futures = [
+                w.submit(self.process_snapshot_retention, cluster)
+                for cluster in clusters
+            ]
+
             for f in as_completed(futures):
                 if f.exception():
                     self.log.error(
@@ -450,11 +449,11 @@ class Snapshot(BaseAction):
     def process(self, clusters):
         client = local_session(self.manager.session_factory).client('redshift')
         with self.executor_factory(max_workers=2) as w:
-            futures = []
-            for cluster in clusters:
-                futures.append(w.submit(
-                    self.process_cluster_snapshot,
-                    client, cluster))
+            futures = [
+                w.submit(self.process_cluster_snapshot, client, cluster)
+                for cluster in clusters
+            ]
+
             for f in as_completed(futures):
                 if f.exception():
                     self.log.error(
@@ -502,11 +501,10 @@ class EnhancedVpcRoutine(BaseAction):
 
     def process(self, clusters):
         with self.executor_factory(max_workers=3) as w:
-            futures = []
-            for cluster in clusters:
-                futures.append(w.submit(
-                    self.process_vpc_routing,
-                    cluster))
+            futures = [
+                w.submit(self.process_vpc_routing, cluster) for cluster in clusters
+            ]
+
             for f in as_completed(futures):
                 if f.exception():
                     self.log.error(
@@ -619,12 +617,21 @@ class RedshiftSetAttributes(BaseAction):
     def process_cluster(self, client, cluster):
         try:
             config = dict(self.data.get('attributes'))
-            modify = {}
-            for k, v in config.items():
-                if ((k in self.cluster_mapping and
-                v != jmespath.search(self.cluster_mapping[k], cluster)) or
-                v != cluster.get('PendingModifiedValues', {}).get(k, cluster.get(k))):
-                    modify[k] = v
+            modify = {
+                k: v
+                for k, v in config.items()
+                if (
+                    (
+                        k in self.cluster_mapping
+                        and v != jmespath.search(self.cluster_mapping[k], cluster)
+                    )
+                    or v
+                    != cluster.get('PendingModifiedValues', {}).get(
+                        k, cluster.get(k)
+                    )
+                )
+            }
+
             if not modify:
                 return
 
@@ -808,10 +815,12 @@ class RedshiftSnapshot(QueryResourceManager):
         universal_taggable = True
 
     def get_arns(self, resources):
-        arns = []
-        for r in resources:
-            arns.append(self.generate_arn(r['ClusterIdentifier'] + '/' + r[self.get_model().id]))
-        return arns
+        return [
+            self.generate_arn(
+                r['ClusterIdentifier'] + '/' + r[self.get_model().id]
+            )
+            for r in resources
+        ]
 
 
 @RedshiftSnapshot.filter_registry.register('age')
@@ -855,8 +864,7 @@ class RedshiftSnapshotCrossAccount(CrossAccountAccessFilter):
         for s in snapshots:
             s_accounts = {a.get('AccountId') for a in s[
                 'AccountsWithRestoreAccess']}
-            delta_accounts = s_accounts.difference(accounts)
-            if delta_accounts:
+            if delta_accounts := s_accounts.difference(accounts):
                 s['c7n:CrossAccountViolations'] = list(delta_accounts)
                 results.append(s)
         return results
@@ -887,10 +895,11 @@ class RedshiftSnapshotDelete(BaseAction):
     def process(self, snapshots):
         self.log.info("Deleting %d Redshift snapshots", len(snapshots))
         with self.executor_factory(max_workers=3) as w:
-            futures = []
-            for snapshot_set in chunks(reversed(snapshots), size=50):
-                futures.append(
-                    w.submit(self.process_snapshot_set, snapshot_set))
+            futures = [
+                w.submit(self.process_snapshot_set, snapshot_set)
+                for snapshot_set in chunks(reversed(snapshots), size=50)
+            ]
+
             for f in as_completed(futures):
                 if f.exception():
                     self.log.error(
@@ -951,11 +960,13 @@ class RedshiftSnapshotRevokeAccess(BaseAction):
     def process(self, snapshots):
         client = local_session(self.manager.session_factory).client('redshift')
         with self.executor_factory(max_workers=2) as w:
-            futures = {}
-            for snapshot_set in chunks(snapshots, 25):
-                futures[w.submit(
-                    self.process_snapshot_set, client, snapshot_set)
-                ] = snapshot_set
+            futures = {
+                w.submit(
+                    self.process_snapshot_set, client, snapshot_set
+                ): snapshot_set
+                for snapshot_set in chunks(snapshots, 25)
+            }
+
             for f in as_completed(futures):
                 if f.exception():
                     self.log.exception(

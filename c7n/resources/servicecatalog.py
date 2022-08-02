@@ -96,8 +96,7 @@ class CatalogPortfolioCrossAccount(CrossAccountAccessFilter):
             if not shared_accounts:
                 continue
             shared_accounts = set(shared_accounts)
-            delta_accounts = shared_accounts.difference(accounts)
-            if delta_accounts:
+            if delta_accounts := shared_accounts.difference(accounts):
                 r[self.annotation_key] = list(delta_accounts)
                 results.append(r)
         return results
@@ -148,15 +147,15 @@ class RemoveSharedAccounts(BaseAction):
     def validate(self):
         if self.data['accounts'] != 'matched':
             return
-        found = False
-        for f in self.manager.iter_filters():
-            if isinstance(f, CatalogPortfolioCrossAccount):
-                found = True
-                break
+        found = any(
+            isinstance(f, CatalogPortfolioCrossAccount)
+            for f in self.manager.iter_filters()
+        )
+
         if not found:
             raise PolicyValidationError(
-                "policy:%s action:%s with matched requires cross-account filter" % (
-                    self.manager.ctx.policy.name, self.type))
+                f"policy:{self.manager.ctx.policy.name} action:{self.type} with matched requires cross-account filter"
+            )
 
     def delete_shared_accounts(self, client, portfolio):
         accounts = self.data.get('accounts')

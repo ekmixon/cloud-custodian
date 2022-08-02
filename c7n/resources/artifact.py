@@ -96,12 +96,12 @@ class DescribeRepo(DescribeSource):
             self.manager.resource_type.service)
         results = []
         for r in resources:
-            rdescribe = self.manager.retry(
+            if rdescribe := self.manager.retry(
                 client.describe_repository,
                 repository=r['name'],
                 domain=r['domainName'],
-                ignore_err_codes=('ResourceNotFoundException',))
-            if rdescribe:
+                ignore_err_codes=('ResourceNotFoundException',),
+            ):
                 results.append(rdescribe['repository'])
         return results
 

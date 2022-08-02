@@ -184,9 +184,8 @@ class SetBoundary(BaseAction):
         client = self.manager.session_factory().client('iam')
         policy = self.data.get('policy')
         if policy and not policy.startswith('arn'):
-            policy = 'arn:{}:iam::{}:policy/{}'.format(
-                get_partition(self.manager.config.region),
-                self.manager.account_id, policy)
+            policy = f'arn:{get_partition(self.manager.config.region)}:iam::{self.manager.account_id}:policy/{policy}'
+
         for r in resources:
             method, params = self.get_method(client, state, policy, r)
             try:
@@ -224,10 +223,11 @@ class DescribeUser(DescribeSource):
         client = local_session(self.manager.session_factory).client('iam')
         results = []
         for r in resources:
-            ru = self.manager.retry(
-                client.get_user, UserName=r['UserName'],
-                ignore_err_codes=client.exceptions.NoSuchEntityException)
-            if ru:
+            if ru := self.manager.retry(
+                client.get_user,
+                UserName=r['UserName'],
+                ignore_err_codes=client.exceptions.NoSuchEntityException,
+            ):
                 results.append(ru['User'])
         return list(filter(None, results))
 
@@ -333,8 +333,7 @@ class SetGroups(BaseAction):
 
     def validate(self):
         if self.data.get('group') == '':
-            raise PolicyValidationError('group cannot be empty on %s'
-                % (self.manager.data))
+            raise PolicyValidationError(f'group cannot be empty on {self.manager.data}')
 
     def process(self, resources):
         group_name = self.data['group']
@@ -372,10 +371,10 @@ class UserSetBoundary(SetBoundary):
 class DescribePolicy(DescribeSource):
 
     def resources(self, query=None):
-        qfilters = PolicyQueryParser.parse(self.manager.data.get('query', []))
-        query = query or {}
-        if qfilters:
+        if qfilters := PolicyQueryParser.parse(self.manager.data.get('query', [])):
             query = {t['Name']: t['Value'] for t in qfilters}
+        else:
+            query = query or {}
         return super(DescribePolicy, self).resources(query=query)
 
     def get_resources(self, resource_ids, cache=True):
@@ -598,7 +597,7 @@ class ServiceUsage(Filter):
 
         while job_resource_map:
             job_results_map = {}
-            for jid, r in job_resource_map.items():
+            for jid in job_resource_map:
                 result = self.manager.retry(
                     client.get_service_last_accessed_details, JobId=jid)
                 if result['JobStatus'] != self.JOB_COMPLETE:
@@ -704,7 +703,10 @@ class CheckPermissions(Filter):
         arn_resources = list(zip(self.get_iam_arns(resources), resources))
 
         # To ignore permission boundaries, override with an allow-all policy
-        self.simulation_boundary_override = '''
+        self.simulation_boundary_override = (
+            None
+            if self.data.get('boundaries', True)
+            else '''
             {
                 "Version": "2012-10-17",
                 "Statement": [{
@@ -713,7 +715,9 @@ class CheckPermissions(Filter):
                     "Resource": "*"
                 }]
             }
-        ''' if not self.data.get('boundaries', True) else None
+        '''
+        )
+
         results = []
         eval_cache = {}
         for arn, r in arn_resources:
@@ -817,14 +821,17 @@ class IamRoleUsage(Filter):
         results = []
         client = local_session(self.manager.session_factory).client('ecs')
         for cluster in client.describe_clusters()['clusters']:
-            services = client.list_services(
-                cluster=cluster['clusterName'])['serviceArns']
-            if services:
-                for service in client.describe_services(
-                        cluster=cluster['clusterName'],
-                        services=services)['services']:
-                    if 'roleArn' in service:
-                        results.append(service['roleArn'])
+            if services := client.list_services(cluster=cluster['clusterName'])[
+                'serviceArns'
+            ]:
+                results.extend(
+                    service['roleArn']
+                    for service in client.describe_services(
+                        cluster=cluster['clusterName'], services=services
+                    )['services']
+                    if 'roleArn' in service
+                )
+
         return results
 
     def collect_profile_roles(self):
@@ -839,8 +846,7 @@ class IamRoleUsage(Filter):
         for p in iprofiles:
             if p['InstanceProfileName'] not in profiles:
                 continue
-            for role in p.get('Roles', []):
-                results.append(role['RoleName'])
+            results.extend(role['RoleName'] for role in p.get('Roles', []))
         return results
 
     def scan_asg_roles(self):
@@ -855,11 +861,9 @@ class IamRoleUsage(Filter):
             # do not include instances that have been recently terminated
             if e['State']['Name'] == 'terminated':
                 continue
-            profile_arn = e.get('IamInstanceProfile', {}).get('Arn', None)
-            if not profile_arn:
-                continue
-            # split arn to get the profile name
-            results.append(profile_arn.split('/')[-1])
+            if profile_arn := e.get('IamInstanceProfile', {}).get('Arn', None):
+                # split arn to get the profile name
+                results.append(profile_arn.split('/')[-1])
         return results
 
 
@@ -1042,8 +1046,12 @@ class NoSpecificIamRoleManagedPolicy(Filter):
     def process(self, resources, event=None):
         c = local_session(self.manager.session_factory).client('iam')
         if self.data.get('value'):
-            return [r for r in resources if not self.data.get('value') in
-            self._managed_policies(c, r)]
+            return [
+                r
+                for r in resources
+                if self.data.get('value') not in self._managed_policies(c, r)
+            ]
+
         return []
 
 
@@ -1086,7 +1094,8 @@ class SetPolicy(BaseAction):
     def validate(self):
         if self.data.get('state') == 'attached' and self.data.get('arn') == "*":
             raise PolicyValidationError(
-                '* operator is not supported for state: attached on %s' % (self.manager.data))
+                f'* operator is not supported for state: attached on {self.manager.data}'
+            )
 
     def attach_policy(self, client, resource, policy_arn):
         client.attach_role_policy(
@@ -1105,23 +1114,21 @@ class SetPolicy(BaseAction):
 
     def list_attached_policies(self, client, resource):
         attached_policy = client.list_attached_role_policies(RoleName=resource['RoleName'])
-        policy_arns = [p.get('PolicyArn') for p in attached_policy['AttachedPolicies']]
-        return policy_arns
+        return [p.get('PolicyArn') for p in attached_policy['AttachedPolicies']]
 
     def process(self, resources):
         client = local_session(self.manager.session_factory).client('iam')
         policy_arn = self.data['arn']
         if policy_arn != "*" and not policy_arn.startswith('arn'):
-            policy_arn = 'arn:{}:iam::{}:policy/{}'.format(
-                get_partition(self.manager.config.region),
-                self.manager.account_id, policy_arn)
+            policy_arn = f'arn:{get_partition(self.manager.config.region)}:iam::{self.manager.account_id}:policy/{policy_arn}'
+
         state = self.data['state']
         for r in resources:
             if state == 'attached':
                 self.attach_policy(client, r, policy_arn)
             elif state == 'detached' and policy_arn != "*":
                 self.detach_policy(client, r, policy_arn)
-            elif state == 'detached' and policy_arn == "*":
+            elif state == 'detached':
                 try:
                     self.detach_all_policies(client, r)
                 except client.exceptions.NoSuchEntityException:
@@ -1178,8 +1185,7 @@ class SetGroupPolicy(SetPolicy):
         attached_policies = client.list_attached_group_policies(
             GroupName=resource["GroupName"]
         )
-        policy_arns = [p.get('PolicyArn') for p in attached_policies['AttachedPolicies']]
-        return policy_arns
+        return [p.get('PolicyArn') for p in attached_policies['AttachedPolicies']]
 
 
 @Role.action_registry.register('delete')
@@ -1231,11 +1237,11 @@ class RoleDelete(BaseAction):
         # An instance profile can contain only one IAM role,
         # although a role can be included in multiple instance profiles
         profile_names = []
-        profiles = self.manager.retry(
+        if profiles := self.manager.retry(
             client.list_instance_profiles_for_role,
             RoleName=r['RoleName'],
-            ignore_err_codes=('NoSuchEntityException',))
-        if profiles:
+            ignore_err_codes=('NoSuchEntityException',),
+        ):
             profile_names = [p.get('InstanceProfileName') for p in profiles['InstanceProfiles']]
         for p in profile_names:
             self.manager.retry(
@@ -1380,17 +1386,19 @@ class AllowAllIamPolicies(Filter):
         if isinstance(statements, dict):
             statements = [statements]
 
-        for s in statements:
-            if ('Condition' not in s and
-                    'Action' in s and
-                    isinstance(s['Action'], str) and
-                    s['Action'] == "*" and
-                    'Resource' in s and
-                    isinstance(s['Resource'], str) and
-                    s['Resource'] == "*" and
-                    s['Effect'] == "Allow"):
-                return True
-        return False
+        return any(
+            (
+                'Condition' not in s
+                and 'Action' in s
+                and isinstance(s['Action'], str)
+                and s['Action'] == "*"
+                and 'Resource' in s
+                and isinstance(s['Resource'], str)
+                and s['Resource'] == "*"
+                and s['Effect'] == "Allow"
+            )
+            for s in statements
+        )
 
     def process(self, resources, event=None):
         c = local_session(self.manager.session_factory).client('iam')
@@ -1463,11 +1471,13 @@ class UsedInstanceProfiles(IamRoleUsage):
     schema = type_schema('used')
 
     def process(self, resources, event=None):
-        results = []
         profiles = self.instance_profile_usage()
-        for r in resources:
-            if r['Arn'] in profiles or r['InstanceProfileName'] in profiles:
-                results.append(r)
+        results = [
+            r
+            for r in resources
+            if r['Arn'] in profiles or r['InstanceProfileName'] in profiles
+        ]
+
         self.log.info(
             "%d of %d instance profiles currently in use." % (
                 len(results), len(resources)))
@@ -1492,11 +1502,16 @@ class UnusedInstanceProfiles(IamRoleUsage):
     schema = type_schema('unused')
 
     def process(self, resources, event=None):
-        results = []
         profiles = self.instance_profile_usage()
-        for r in resources:
-            if (r['Arn'] not in profiles and r['InstanceProfileName'] not in profiles):
-                results.append(r)
+        results = [
+            r
+            for r in resources
+            if (
+                r['Arn'] not in profiles
+                and r['InstanceProfileName'] not in profiles
+            )
+        ]
+
         self.log.info(
             "%d of %d instance profiles currently not in use." % (
                 len(results), len(resources)))
@@ -1693,11 +1708,7 @@ class CredentialReport(Filter):
         vf.annotate = False
 
         # annotation merging with previous respecting block operators
-        k_matched = []
-        for v in info.get(prefix, ()):
-            if vf.match(v):
-                k_matched.append(v)
-
+        k_matched = [v for v in info.get(prefix, ()) if vf.match(v)]
         for k in k_matched:
             k['c7n:match-type'] = 'credential'
 
@@ -1828,12 +1839,14 @@ class GroupMembership(ValueFilter):
     def process(self, resources, event=None):
         client = local_session(self.manager.session_factory).client('iam')
         with self.executor_factory(max_workers=2) as w:
-            futures = []
-            for user_set in chunks(
-                    [r for r in resources if 'c7n:Groups' not in r], size=50):
-                futures.append(
-                    w.submit(self.get_user_groups, client, user_set))
-            for f in as_completed(futures):
+            futures = [
+                w.submit(self.get_user_groups, client, user_set)
+                for user_set in chunks(
+                    [r for r in resources if 'c7n:Groups' not in r], size=50
+                )
+            ]
+
+            for _ in as_completed(futures):
                 pass
 
         matched = []
@@ -1903,10 +1916,7 @@ class UserAccessKey(ValueFilter):
             keys = r[self.annotation_key]
             if self.matched_annotation_key in r and match_op == 'and':
                 keys = r[self.matched_annotation_key]
-            k_matched = []
-            for k in keys:
-                if self.match(k):
-                    k_matched.append(k)
+            k_matched = [k for k in keys if self.match(k)]
             for k in k_matched:
                 k['c7n:match-type'] = 'access'
             self.merge_annotation(r, self.matched_annotation_key, k_matched)
@@ -2022,23 +2032,25 @@ class UserMfaDevice(ValueFilter):
 class UserFinding(OtherResourcePostFinding):
 
     def format_resource(self, r):
-        if any(filter(lambda x: isinstance(x, UserAccessKey), self.manager.iter_filters())):
-            details = {
-                "UserName": "arn:aws:iam:{}:user/{}".format(
-                    self.manager.config.account_id, r["c7n:AccessKeys"][0]["UserName"]
-                ),
-                "Status": r["c7n:AccessKeys"][0]["Status"],
-                "CreatedAt": r["c7n:AccessKeys"][0]["CreateDate"].isoformat(),
-            }
-            accesskey = {
-                "Type": "AwsIamAccessKey",
-                "Id": r["c7n:AccessKeys"][0]["AccessKeyId"],
-                "Region": self.manager.config.region,
-                "Details": {"AwsIamAccessKey": filter_empty(details)},
-            }
-            return filter_empty(accesskey)
-        else:
+        if not any(
+            filter(
+                lambda x: isinstance(x, UserAccessKey), self.manager.iter_filters()
+            )
+        ):
             return super(UserFinding, self).format_resource(r)
+        details = {
+            "UserName": f'arn:aws:iam:{self.manager.config.account_id}:user/{r["c7n:AccessKeys"][0]["UserName"]}',
+            "Status": r["c7n:AccessKeys"][0]["Status"],
+            "CreatedAt": r["c7n:AccessKeys"][0]["CreateDate"].isoformat(),
+        }
+
+        accesskey = {
+            "Type": "AwsIamAccessKey",
+            "Id": r["c7n:AccessKeys"][0]["AccessKeyId"],
+            "Region": self.manager.config.region,
+            "Details": {"AwsIamAccessKey": filter_empty(details)},
+        }
+        return filter_empty(accesskey)
 
 
 @User.action_registry.register('delete')
@@ -2260,8 +2272,10 @@ class UserDelete(BaseAction):
 
     def process(self, resources):
         client = local_session(self.manager.session_factory).client('iam')
-        self.log.debug('Deleting user %s options: %s' %
-            (len(resources), self.data.get('options', 'all')))
+        self.log.debug(
+            f"Deleting user {len(resources)} options: {self.data.get('options', 'all')}"
+        )
+
         for r in resources:
             self.process_user(client, r)
 
@@ -2336,19 +2350,16 @@ class UserRemoveAccessKey(BaseAction):
 
             keys = r['c7n:AccessKeys']
             if matched:
-                m_keys = resolve_credential_keys(
-                    r.get(CredentialReport.matched_annotation_key),
-                    keys)
-                # It is possible for a _user_ to match multiple credential filters
-                # without having any single key match them all.
-                if not m_keys:
-                    continue
-                keys = m_keys
+                if m_keys := resolve_credential_keys(
+                    r.get(CredentialReport.matched_annotation_key), keys
+                ):
+                    keys = m_keys
 
+                else:
+                    continue
             for k in keys:
-                if age:
-                    if not k['CreateDate'] < threshold_date:
-                        continue
+                if age and not k['CreateDate'] < threshold_date:
+                    continue
                 if disable:
                     client.update_access_key(
                         UserName=r['UserName'],
@@ -2598,8 +2609,7 @@ class UserGroupDelete(BaseAction):
 
     def process_group(self, client, r):
         error = None
-        force = self.data.get('force', False)
-        if force:
+        if force := self.data.get('force', False):
             users = client.get_group(GroupName=r['GroupName']).get('Users', [])
             for user in users:
                 client.remove_user_from_group(

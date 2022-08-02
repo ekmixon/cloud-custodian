@@ -30,11 +30,9 @@ def load_resources(resource_types=('*',)):
 
 def should_load_provider(name, provider_types):
     global LOADED
-    if (name not in LOADED and
-        ('*' in provider_types or
-         name in provider_types)):
-        return True
-    return False
+    return name not in LOADED and (
+        ('*' in provider_types or name in provider_types)
+    )
 
 
 PROVIDER_NAMES = ('aws', 'azure', 'gcp', 'k8s', 'openstack', 'awscc')
@@ -55,7 +53,7 @@ def load_available(resources=True):
         else:
             found.append(provider)
     if resources:
-        load_resources(['%s.*' % s for s in found])
+        load_resources([f'{s}.*' for s in found])
     return found
 
 

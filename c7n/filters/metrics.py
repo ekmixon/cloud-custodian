@@ -142,22 +142,21 @@ class MetricsFilter(Filter):
         ns = self.data.get('namespace')
         if not ns:
             ns = getattr(self.model, 'metrics_namespace', None)
-            if not ns:
-                ns = self.DEFAULT_NAMESPACE[self.model.service]
+        if not ns:
+            ns = self.DEFAULT_NAMESPACE[self.model.service]
         self.namespace = ns
 
         self.log.debug("Querying metrics for %d", len(resources))
         matched = []
         with self.executor_factory(max_workers=3) as w:
-            futures = []
-            for resource_set in chunks(resources, 50):
-                futures.append(
-                    w.submit(self.process_resource_set, resource_set))
+            futures = [
+                w.submit(self.process_resource_set, resource_set)
+                for resource_set in chunks(resources, 50)
+            ]
 
             for f in as_completed(futures):
                 if f.exception():
-                    self.log.warning(
-                        "CW Retrieval error: %s" % f.exception())
+                    self.log.warning(f"CW Retrieval error: {f.exception()}")
                     continue
                 matched.extend(f.result())
         return matched
@@ -170,8 +169,10 @@ class MetricsFilter(Filter):
         dims = []
         if 'dimensions' not in self.data:
             return dims
-        for k, v in self.data['dimensions'].items():
-            dims.append({'Name': k, 'Value': v})
+        dims.extend(
+            {'Name': k, 'Value': v} for k, v in self.data['dimensions'].items()
+        )
+
         return dims
 
     def process_resource_set(self, resource_set):
@@ -192,7 +193,7 @@ class MetricsFilter(Filter):
             # policies, still the lack of full qualification on the key
             # means multiple filters within a policy using the same metric
             # across different periods or dimensions would be problematic.
-            key = "%s.%s.%s.%s" % (self.namespace, self.metric, self.statistics, str(self.days))
+            key = f"{self.namespace}.{self.metric}.{self.statistics}.{str(self.days)}"
             if key not in collected_metrics:
                 collected_metrics[key] = client.get_metric_statistics(
                     Namespace=self.namespace,
@@ -260,10 +261,8 @@ class ShieldMetrics(MetricsFilter):
     def validate(self):
         if self.data.get('name') not in self.metrics:
             raise PolicyValidationError(
-                "invalid shield metric %s valid:%s on %s" % (
-                    self.data['name'],
-                    ", ".join(self.metrics),
-                    self.manager.data))
+                f"""invalid shield metric {self.data['name']} valid:{", ".join(self.metrics)} on {self.manager.data}"""
+            )
 
     def get_dimensions(self, resource):
         return [{

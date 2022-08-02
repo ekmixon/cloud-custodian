@@ -30,13 +30,14 @@ class ConfigRecorder(QueryResourceManager):
         client = local_session(self.session_factory).client('config')
 
         for r in resources:
-            status = client.describe_configuration_recorder_status(
-                ConfigurationRecorderNames=[r['name']])['ConfigurationRecordersStatus']
-            if status:
+            if status := client.describe_configuration_recorder_status(
+                ConfigurationRecorderNames=[r['name']]
+            )['ConfigurationRecordersStatus']:
                 r.update({'status': status.pop()})
 
-            channels = client.describe_delivery_channels().get('DeliveryChannels')
-            if channels:
+            if channels := client.describe_delivery_channels().get(
+                'DeliveryChannels'
+            ):
                 r.update({'deliveryChannel': channels.pop()})
         return resources
 
@@ -59,13 +60,19 @@ class ConfigCrossAccountFilter(CrossAccountAccessFilter):
         allowed_accounts = set(self.get_accounts())
         allowed_regions = set(self.data.get('allowed_regions', ()))
 
-        matched = []
         auths = client.describe_aggregation_authorizations().get('AggregationAuthorizations', [])
 
-        for a in auths:
-            if (a['AuthorizedAccountId'] not in allowed_accounts or
-                    (allowed_regions and a['AuthorizedAwsRegion'] not in allowed_regions)):
-                matched.append(a)
+        matched = [
+            a
+            for a in auths
+            if (
+                a['AuthorizedAccountId'] not in allowed_accounts
+                or (
+                    allowed_regions
+                    and a['AuthorizedAwsRegion'] not in allowed_regions
+                )
+            )
+        ]
 
         # only 1 config recorder per account
         resources[0][self.annotation_key] = matched

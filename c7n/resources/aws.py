@@ -94,18 +94,16 @@ def _default_region(options):
                   'or setting a region in ~/.aws/config')
         sys.exit(1)
 
-    log.debug("using default region:%s from boto" % options.regions[0])
+    log.debug(f"using default region:{options.regions[0]} from boto")
 
 
 def _default_account_id(options):
     if options.account_id:
         return
     elif options.assume_role:
-        try:
+        with contextlib.suppress(IndexError):
             options.account_id = options.assume_role.split(':')[4]
             return
-        except IndexError:
-            pass
     try:
         session = get_profile_session(options)
         options.account_id = utils.get_account_id_from_sts(session)
@@ -130,14 +128,7 @@ class Arn(namedtuple('_Arn', (
     __slots__ = ()
 
     def __repr__(self):
-        return "<arn:%s:%s:%s:%s:%s%s%s>" % (
-            self.partition,
-            self.service,
-            self.region,
-            self.account_id,
-            self.resource_type,
-            self.separator,
-            self.resource)
+        return f"<arn:{self.partition}:{self.service}:{self.region}:{self.account_id}:{self.resource_type}{self.separator}{self.resource}>"
 
     @classmethod
     def parse(cls, arn):
@@ -202,9 +193,11 @@ class ArnResolver:
                 continue
             if arn.service != (klass.resource_type.arn_service or klass.resource_type.service):
                 continue
-            if (type_name in ('asg', 'ecs-task') and
-                    "%s%s" % (klass.resource_type.arn_type, klass.resource_type.arn_separator)
-                    in arn.resource_type):
+            if (
+                type_name in ('asg', 'ecs-task')
+                and f"{klass.resource_type.arn_type}{klass.resource_type.arn_separator}"
+                in arn.resource_type
+            ):
                 return type_name
             elif (klass.resource_type.arn_type is not None and
                     klass.resource_type.arn_type == arn.resource_type):
@@ -227,8 +220,13 @@ class MetricsOutput(Metrics):
         self.namespace = self.config.get('namespace', DEFAULT_NAMESPACE)
         self.region = self.config.get('region')
         self.destination = (
-            self.config.scheme == 'aws' and
-            self.config.get('netloc') == 'master') and 'master' or None
+            'master'
+            if (
+                self.config.scheme == 'aws'
+                and self.config.get('netloc') == 'master'
+            )
+            else None
+        )
 
     def _format_metric(self, key, value, unit, dimensions):
         d = {
@@ -274,20 +272,29 @@ class CloudWatchLogOutput(LogOutput):
             self.log_group = self.config['path'].strip('/')
         else:
             # join netloc to path for casual usages of aws://log/group/name
-            self.log_group = ("%s/%s" % (
-                self.config['netloc'], self.config['path'].strip('/'))).strip('/')
+            self.log_group = (
+                f"{self.config['netloc']}/{self.config['path'].strip('/')}".strip(
+                    '/'
+                )
+            )
+
         self.region = self.config.get('region', ctx.options.region)
         self.destination = (
-            self.config.scheme == 'aws' and
-            self.config.get('netloc') == 'master') and 'master' or None
+            'master'
+            if (
+                self.config.scheme == 'aws'
+                and self.config.get('netloc') == 'master'
+            )
+            else None
+        )
 
     def construct_stream_name(self):
         if self.config.get('stream') is None:
             log_stream = self.ctx.policy.name
             if self.config.get('region') is not None:
-                log_stream = "{}/{}".format(self.ctx.options.region, log_stream)
+                log_stream = f"{self.ctx.options.region}/{log_stream}"
             if self.config.get('netloc') == 'master':
-                log_stream = "{}/{}".format(self.ctx.options.account_id, log_stream)
+                log_stream = f"{self.ctx.options.account_id}/{log_stream}"
         else:
             log_stream = self.config.get('stream').format(
                 region=self.ctx.options.region,
@@ -306,10 +313,7 @@ class CloudWatchLogOutput(LogOutput):
         return CloudWatchLogHandler(**params)
 
     def __repr__(self):
-        return "<%s to group:%s stream:%s>" % (
-            self.__class__.__name__,
-            self.ctx.options.log_group,
-            self.ctx.policy.name)
+        return f"<{self.__class__.__name__} to group:{self.ctx.options.log_group} stream:{self.ctx.policy.name}>"
 
 
 class XrayEmitter:
@@ -396,11 +400,7 @@ class XrayContext(Context):
         tid = threading.get_ident()
         entities = self._local.get('entities', ())
         for s in reversed(entities):
-            if s.thread_id == tid:
-                return s
-            # custodian main thread won't advance (create new segment)
-            # with worker threads still doing pool work.
-            elif s.thread_id == self._main_tid:
+            if s.thread_id in [tid, self._main_tid]:
                 return s
         return self.handle_context_missing()
 
@@ -514,8 +514,7 @@ class ApiStats(DeltaStats):
             'after-call.*.*', self._record, unique_id='c7n-api-stats')
 
     def _record(self, http_response, parsed, model, **kwargs):
-        self.api_calls["%s.%s" % (
-            model.service_model.endpoint_prefix, model.name)] += 1
+        self.api_calls[f"{model.service_model.endpoint_prefix}.{model.name}"] += 1
 
 
 @blob_outputs.register('s3')
@@ -651,15 +650,15 @@ def join_output(output_dir, suffix):
         return output_dir.rstrip('/')
     if output_dir.endswith('://'):
         return output_dir + suffix
-    return output_dir.rstrip('/') + '/%s' % suffix
+    return output_dir.rstrip('/') + f'/{suffix}'
 
 
 def fake_session():
-    session = boto3.Session(  # nosec nosemgrep
+    return boto3.Session(  # nosec nosemgrep
         region_name='us-east-1',
         aws_access_key_id='never',
-        aws_secret_access_key='found')
-    return session
+        aws_secret_access_key='found',
+    )
 
 
 def get_service_region_map(regions, resource_types, provider='aws'):
@@ -668,7 +667,7 @@ def get_service_region_map(regions, resource_types, provider='aws'):
     session = fake_session()
     normalized_types = []
     for r in resource_types:
-        if r.startswith('%s.' % provider):
+        if r.startswith(f'{provider}.'):
             normalized_types.append(r[len(provider) + 1:])
         else:
             normalized_types.append(r)
@@ -684,13 +683,12 @@ def get_service_region_map(regions, resource_types, provider='aws'):
             partition_regions[r] = p
 
     partitions = ['aws']
-    for r in regions:
-        if r in partition_regions:
-            partitions.append(partition_regions[r])
+    partitions.extend(
+        partition_regions[r] for r in regions if r in partition_regions
+    )
 
     service_region_map = {}
-    for s in set(itertools.chain(resource_service_map.values())):
-        for partition in partitions:
-            service_region_map.setdefault(s, []).extend(
-                session.get_available_regions(s, partition_name=partition))
+    for s, partition in itertools.product(set(itertools.chain(resource_service_map.values())), partitions):
+        service_region_map.setdefault(s, []).extend(
+            session.get_available_regions(s, partition_name=partition))
     return service_region_map, resource_service_map

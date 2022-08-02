@@ -62,15 +62,14 @@ class CrossAccount(CrossAccountAccessFilter):
         """
         policy['Statement'] = policy.pop('Statements')
         for s in policy['Statement']:
-            actions = ['serverlessrepo:%s' % a for a in s['Actions']]
+            actions = [f'serverlessrepo:{a}' for a in s['Actions']]
             s['Actions'] = actions
             if 'Effect' not in s:
                 s['Effect'] = 'Allow'
             if 'Principals' in s:
                 s['Principal'] = {'AWS': s.pop('Principals')}
             if 'PrincipalOrgIDs' in s:
-                org_ids = s.pop('PrincipalOrgIDs')
-                if org_ids:
+                if org_ids := s.pop('PrincipalOrgIDs'):
                     s['Condition'] = {
                         'StringEquals': {'aws:PrincipalOrgID': org_ids}}
         return policy

@@ -71,9 +71,12 @@ def check_unique(data):
         if v == 1:
             counter.pop(k)
     if counter:
-        return [ValueError(
-            "Only one policy with a given name allowed, duplicates: {}".format(counter)),
-            list(counter.keys())[0]]
+        return [
+            ValueError(
+                f"Only one policy with a given name allowed, duplicates: {counter}"
+            ),
+            list(counter.keys())[0],
+        ]
 
 
 def policy_error_scope(error, data):
@@ -83,8 +86,11 @@ def policy_error_scope(error, data):
         return error
     pdata = data['policies'][err_path[1]]
     pdata.get('name', 'unknown')
-    error.message = "Error on policy:{} resource:{}\n".format(
-        pdata.get('name', 'unknown'), pdata.get('resource', 'unknown')) + error.message
+    error.message = (
+        f"Error on policy:{pdata.get('name', 'unknown')} resource:{pdata.get('resource', 'unknown')}\n"
+        + error.message
+    )
+
     return error
 
 
@@ -107,11 +113,15 @@ def specific_error(error):
         r = error.instance.get('resource')
 
     if r is not None:
-        found = None
-        for idx, v in enumerate(error.validator_value):
-            if '$ref' in v and v['$ref'].rsplit('/', 2)[1].endswith(r):
-                found = idx
-                break
+        found = next(
+            (
+                idx
+                for idx, v in enumerate(error.validator_value)
+                if '$ref' in v and v['$ref'].rsplit('/', 2)[1].endswith(r)
+            ),
+            None,
+        )
+
         if found is not None:
             # error context is a flat list of all validation
             # failures, we have to index back to the policy
@@ -297,18 +307,19 @@ def generate(resource_types=()):
     resource_refs = []
     for cloud_name, cloud_type in sorted(clouds.items()):
         for type_name, resource_type in sorted(cloud_type.resources.items()):
-            r_type_name = "%s.%s" % (cloud_name, type_name)
+            r_type_name = f"{cloud_name}.{type_name}"
             if resource_types and r_type_name not in resource_types:
                 if not resource_type.type_aliases:
                     continue
-                elif not {"%s.%s" % (cloud_name, ralias) for ralias
-                        in resource_type.type_aliases}.intersection(
-                        resource_types):
+                elif not {
+                    f"{cloud_name}.{ralias}"
+                    for ralias in resource_type.type_aliases
+                }.intersection(resource_types):
                     continue
 
             aliases = []
             if resource_type.type_aliases:
-                aliases.extend(["%s.%s" % (cloud_name, a) for a in resource_type.type_aliases])
+                aliases.extend([f"{cloud_name}.{a}" for a in resource_type.type_aliases])
                 # aws gets legacy aliases with no cloud prefix
                 if cloud_name == 'aws':
                     aliases.extend(resource_type.type_aliases)
@@ -360,21 +371,24 @@ def process_resource(
     for a in ElementSchema.elements(resource_type.action_registry):
         action_name = a.type
         if a.schema_alias:
-            action_alias = "%s.%s" % (provider_name, action_name)
+            action_alias = f"{provider_name}.{action_name}"
             if action_alias in definitions['actions']:
 
                 if definitions['actions'][action_alias] != a.schema: # NOQA
-                    msg = "Schema mismatch on type:{} action:{} w/ schema alias ".format(
-                        type_name, action_name)
+                    msg = f"Schema mismatch on type:{type_name} action:{action_name} w/ schema alias "
+
                     raise SyntaxError(msg)
             else:
                 definitions['actions'][action_alias] = a.schema
-            action_refs.append({'$ref': '#/definitions/actions/%s' % action_alias})
+            action_refs.append({'$ref': f'#/definitions/actions/{action_alias}'})
         else:
             r['actions'][action_name] = a.schema
             action_refs.append(
-                {'$ref': '#/definitions/resources/%s/actions/%s' % (
-                    type_name, action_name)})
+                {
+                    '$ref': f'#/definitions/resources/{type_name}/actions/{action_name}'
+                }
+            )
+
 
     # one word action shortcuts
     action_refs.append(
@@ -384,30 +398,38 @@ def process_resource(
     for f in ElementSchema.elements(resource_type.filter_registry):
         filter_name = f.type
         if filter_name == 'value':
-            filter_refs.append({'$ref': '#/definitions/filters/value'})
-            filter_refs.append({'$ref': '#/definitions/filters/valuekv'})
+            filter_refs.extend(
+                (
+                    {'$ref': '#/definitions/filters/value'},
+                    {'$ref': '#/definitions/filters/valuekv'},
+                )
+            )
+
         elif filter_name == 'event':
             filter_refs.append({'$ref': '#/definitions/filters/event'})
         elif f.schema_alias:
-            filter_alias = "%s.%s" % (provider_name, filter_name)
+            filter_alias = f"{provider_name}.{filter_name}"
             if filter_alias in definitions['filters']:
                 assert definitions['filters'][filter_alias] == f.schema, "Schema mismatch on filter w/ schema alias" # NOQA
             else:
                 definitions['filters'][filter_alias] = f.schema
-            filter_refs.append({'$ref': '#/definitions/filters/%s' % filter_alias})
+            filter_refs.append({'$ref': f'#/definitions/filters/{filter_alias}'})
             continue
         else:
             r['filters'][filter_name] = f.schema
             filter_refs.append(
-                {'$ref': '#/definitions/resources/%s/filters/%s' % (
-                    type_name, filter_name)})
+                {
+                    '$ref': f'#/definitions/resources/{type_name}/filters/{filter_name}'
+                }
+            )
+
 
     # one word filter shortcuts
     filter_refs.append(
         {'enum': list(resource_type.filter_registry.keys())})
 
-    block_fref = '#/definitions/resources/%s/policy/allOf/1/properties/filters' % (
-        type_name)
+    block_fref = f'#/definitions/resources/{type_name}/policy/allOf/1/properties/filters'
+
     filter_refs.extend([
         {'type': 'object', 'additionalProperties': False,
          'properties': {'or': {'$ref': block_fref}}},
@@ -438,7 +460,7 @@ def process_resource(
         resource_policy['allOf'][1]['properties']['query'] = {}
 
     r['policy'] = resource_policy
-    return {'$ref': '#/definitions/resources/%s/policy' % type_name}
+    return {'$ref': f'#/definitions/resources/{type_name}/policy'}
 
 
 def resource_outline(provider=None):
@@ -448,7 +470,7 @@ def resource_outline(provider=None):
             continue
         cresources = outline[cname] = {}
         for rname, rtype in sorted(ctype.resources.items()):
-            cresources['%s.%s' % (cname, rname)] = rinfo = {}
+            cresources[f'{cname}.{rname}'] = rinfo = {}
             rinfo['filters'] = sorted(rtype.filter_registry.keys())
             rinfo['actions'] = sorted(rtype.action_registry.keys())
     return outline
@@ -466,7 +488,7 @@ def resource_vocabulary(cloud_name=None, qualify_name=True, aliases=True):
             continue
         for rname, rtype in ctype.resources.items():
             if qualify_name:
-                resources['%s.%s' % (cname, rname)] = rtype
+                resources[f'{cname}.{rname}'] = rtype
             else:
                 resources[rname] = rtype
 
@@ -493,16 +515,12 @@ def resource_vocabulary(cloud_name=None, qualify_name=True, aliases=True):
         if aliases and resource_type.type_aliases:
             provider = type_name.split('.', 1)[0]
             for type_alias in resource_type.type_aliases:
-                vocabulary['aliases'][
-                    "{}.{}".format(provider, type_alias)] = vocabulary[type_name]
+                vocabulary['aliases'][f"{provider}.{type_alias}"] = vocabulary[type_name]
                 if provider == 'aws':
                     vocabulary['aliases'][type_alias] = vocabulary[type_name]
             vocabulary[type_name]['resource_type'] = type_name
 
-    vocabulary["mode"] = {}
-    for mode_name, cls in execution.items():
-        vocabulary["mode"][mode_name] = cls
-
+    vocabulary["mode"] = dict(execution.items())
     return vocabulary
 
 
@@ -537,7 +555,7 @@ class ElementSchema:
         while parts:
             k = parts.pop(0)
             if frag:
-                k = "%s.%s" % (frag, k)
+                k = f"{frag}.{k}"
                 frag = None
                 parts.insert(0, 'classes')
             elif k in clouds:
@@ -546,7 +564,7 @@ class ElementSchema:
                     parts.append('resource')
                 continue
             if k not in current:
-                raise ValueError("Invalid schema path %s" % schema_path)
+                raise ValueError(f"Invalid schema path {schema_path}")
             current = current[k]
         return current
 
@@ -571,9 +589,7 @@ class ElementSchema:
             if b in (ValueFilter, object):
                 continue
             doc = b.__doc__ or ElementSchema.doc(b)
-        if doc is not None:
-            return inspect.cleandoc(doc)
-        return ""
+        return inspect.cleandoc(doc) if doc is not None else ""
 
     @staticmethod
     def schema(definitions, cls):
@@ -590,8 +606,8 @@ class ElementSchema:
             if k == '$ref':
                 # the value here is in the form of: '#/definitions/path/to/key'
                 parts = v.split('/')
-                if ['#', 'definitions'] != parts[0:2]:
-                    raise ValueError("Invalid Ref %s" % v)
+                if ['#', 'definitions'] != parts[:2]:
+                    raise ValueError(f"Invalid Ref {v}")
                 current = definitions
                 for p in parts[2:]:
                     if p not in current:
@@ -621,13 +637,13 @@ def pprint_schema_summary(vocabulary):
                 stats['filters'][f] += 1
 
     for provider, stats in providers.items():
-        print("%s:" % provider)
+        print(f"{provider}:")
         print(" resource count: %d" % stats['resources'])
         print(" actions: %d" % len(stats['actions']))
         print(" filters: %d" % len(stats['filters']))
 
     for non_providers_type, length in non_providers.items():
-        print("%s:" % non_providers_type)
+        print(f"{non_providers_type}:")
         print(" count: %d" % length)
 
 

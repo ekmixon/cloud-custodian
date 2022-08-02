@@ -44,11 +44,11 @@ class ConfigCluster(ConfigSource):
         resource.pop('TagList', None)  # we pull tags from supplementary config
         for k in list(resource.keys()):
             if k.startswith('Dbc'):
-                resource["DBC%s" % (k[3:])] = resource.pop(k)
+                resource[f"DBC{k[3:]}"] = resource.pop(k)
             elif k.startswith('Iamd'):
-                resource['IAMD%s' % (k[4:])] = resource.pop(k)
+                resource[f'IAMD{k[4:]}'] = resource.pop(k)
             elif k.startswith('Dbs'):
-                resource["DBS%s" % (k[3:])] = resource.pop(k)
+                resource[f"DBS{k[3:]}"] = resource.pop(k)
         return resource
 
 
@@ -400,11 +400,11 @@ class ConfigClusterSnapshot(ConfigSource):
         for k, v in list(resource.items()):
             if k.startswith('Dbcl'):
                 resource.pop(k)
-                k = 'DBCl%s' % k[4:]
+                k = f'DBCl{k[4:]}'
                 resource[k] = v
             elif k.startswith('Iamd'):
                 resource.pop(k)
-                k = 'IAMD%s' % k[4:]
+                k = f'IAMD{k[4:]}'
                 resource[k] = v
         return resource
 
@@ -444,10 +444,11 @@ class CrossAccountSnapshot(CrossAccountAccessFilter):
         self.accounts = self.get_accounts()
         results = []
         with self.executor_factory(max_workers=2) as w:
-            futures = []
-            for resource_set in chunks(resources, 20):
-                futures.append(w.submit(
-                    self.process_resource_set, resource_set))
+            futures = [
+                w.submit(self.process_resource_set, resource_set)
+                for resource_set in chunks(resources, 20)
+            ]
+
             for f in as_completed(futures):
                 results.extend(f.result())
         return results
@@ -463,8 +464,7 @@ class CrossAccountSnapshot(CrossAccountAccessFilter):
                          'DBClusterSnapshotAttributesResult']['DBClusterSnapshotAttributes']}
             r[self.attributes_key] = attrs
             shared_accounts = set(attrs.get('restore', []))
-            delta_accounts = shared_accounts.difference(self.accounts)
-            if delta_accounts:
+            if delta_accounts := shared_accounts.difference(self.accounts):
                 r[self.annotation_key] = list(delta_accounts)
                 results.append(r)
         return results
@@ -579,10 +579,11 @@ class RDSClusterSnapshotDelete(BaseAction):
         client = local_session(self.manager.session_factory).client('rds')
         error = None
         with self.executor_factory(max_workers=2) as w:
-            futures = []
-            for snapshot_set in chunks(reversed(snapshots), size=50):
-                futures.append(
-                    w.submit(self.process_snapshot_set, client, snapshot_set))
+            futures = [
+                w.submit(self.process_snapshot_set, client, snapshot_set)
+                for snapshot_set in chunks(reversed(snapshots), size=50)
+            ]
+
             for f in as_completed(futures):
                 if f.exception():
                     error = f.exception()
@@ -642,19 +643,22 @@ class ConsecutiveSnapshots(Filter):
         results = []
         retention = self.data.get('days')
         utcnow = datetime.utcnow()
-        expected_dates = set()
-        for days in range(1, retention + 1):
-            expected_dates.add((utcnow - timedelta(days=days)).strftime('%Y-%m-%d'))
+        expected_dates = {
+            (utcnow - timedelta(days=days)).strftime('%Y-%m-%d')
+            for days in range(1, retention + 1)
+        }
 
         for resource_set in chunks(
                 [r for r in resources if self.annotation not in r], 50):
             self.process_resource_set(client, resource_set)
 
         for r in resources:
-            snapshot_dates = set()
-            for snapshot in r[self.annotation]:
-                if snapshot['Status'] == 'available':
-                    snapshot_dates.add(snapshot['SnapshotCreateTime'].strftime('%Y-%m-%d'))
+            snapshot_dates = {
+                snapshot['SnapshotCreateTime'].strftime('%Y-%m-%d')
+                for snapshot in r[self.annotation]
+                if snapshot['Status'] == 'available'
+            }
+
             if expected_dates.issubset(snapshot_dates):
                 results.append(r)
         return results

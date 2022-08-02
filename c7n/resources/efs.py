@@ -160,14 +160,20 @@ class ConfigureLifecycle(BaseAction):
     def validate(self):
         if self.data.get('state') == 'enable' and 'rules' not in self.data:
             raise PolicyValidationError(
-                'rules are required to enable lifecycle configuration %s' % (self.manager.data))
+                f'rules are required to enable lifecycle configuration {self.manager.data}'
+            )
+
         if self.data.get('state') == 'disable' and 'rules' in self.data:
             raise PolicyValidationError(
-                'rules not required to disable lifecycle configuration %s' % (self.manager.data))
+                f'rules not required to disable lifecycle configuration {self.manager.data}'
+            )
+
         if self.data.get('rules'):
-            attrs = {}
-            attrs['LifecyclePolicies'] = self.data['rules']
-            attrs['FileSystemId'] = 'PolicyValidator'
+            attrs = {
+                'LifecyclePolicies': self.data['rules'],
+                'FileSystemId': 'PolicyValidator',
+            }
+
             return shape_validate(attrs, self.shape, 'efs')
 
     def process(self, resources):
@@ -209,15 +215,17 @@ class LifecyclePolicy(Filter):
 
     def process(self, resources, event=None):
         resources = self.fetch_resources_lfc(resources)
-        if self.data.get('value'):
-            config = {'TransitionToIA': self.data.get('value')}
-            if self.data.get('state') == 'present':
-                return [r for r in resources if config in r.get('c7n:LifecyclePolicies')]
-            return [r for r in resources if config not in r.get('c7n:LifecyclePolicies')]
-        else:
-            if self.data.get('state') == 'present':
-                return [r for r in resources if r.get('c7n:LifecyclePolicies')]
-            return [r for r in resources if r.get('c7n:LifecyclePolicies') == []]
+        if not self.data.get('value'):
+            return (
+                [r for r in resources if r.get('c7n:LifecyclePolicies')]
+                if self.data.get('state') == 'present'
+                else [r for r in resources if r.get('c7n:LifecyclePolicies') == []]
+            )
+
+        config = {'TransitionToIA': self.data.get('value')}
+        if self.data.get('state') == 'present':
+            return [r for r in resources if config in r.get('c7n:LifecyclePolicies')]
+        return [r for r in resources if config not in r.get('c7n:LifecyclePolicies')]
 
     def fetch_resources_lfc(self, resources):
         client = local_session(self.manager.session_factory).client('efs')

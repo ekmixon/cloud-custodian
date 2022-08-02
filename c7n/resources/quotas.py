@@ -142,10 +142,10 @@ class UsageFilter(MetricsFilter):
     percentile_regex = re.compile('p\\d{0,2}\\.{0,1}\\d{0,2}')
 
     def get_dimensions(self, usage_metric):
-        dimensions = []
-        for k, v in usage_metric['MetricDimensions'].items():
-            dimensions.append({'Name': k, 'Value': v})
-        return dimensions
+        return [
+            {'Name': k, 'Value': v}
+            for k, v in usage_metric['MetricDimensions'].items()
+        ]
 
     def process(self, resources, event):
         client = local_session(self.manager.session_factory).client('cloudwatch')
@@ -246,7 +246,7 @@ class RequestHistoryFilter(RelatedResourceFilter):
     def _add_annotations(self, related_ids, resource):
         resources = self.get_related([resource])
         a_resources = resources.get(resource[self.RelatedIdsExpression], [])
-        akey = 'c7n:%s' % self.AnnotationKey
+        akey = f'c7n:{self.AnnotationKey}'
         resource[akey] = a_resources
 
 
@@ -288,11 +288,14 @@ class Increase(Action):
                 )
             except client.exceptions.QuotaExceededException as e:
                 error = e
-                self.log.error('Requested:%s exceeds quota limit for %s' % (count, r['QuotaCode']))
+                self.log.error(f"Requested:{count} exceeds quota limit for {r['QuotaCode']}")
                 continue
             except (client.exceptions.AccessDeniedException,
                     client.exceptions.DependencyAccessDeniedException,):
-                raise PolicyExecutionError('Access Denied to increase quota: %s' % r['QuotaCode'])
+                raise PolicyExecutionError(
+                    f"Access Denied to increase quota: {r['QuotaCode']}"
+                )
+
             except (client.exceptions.NoSuchResourceException,
                     client.exceptions.InvalidResourceStateException,
                     client.exceptions.ResourceAlreadyExistsException,) as e:

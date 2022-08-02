@@ -335,17 +335,15 @@ class Time(Filter):
 
     def validate(self):
         if self.get_tz(self.default_tz) is None:
-            raise PolicyValidationError(
-                "Invalid timezone specified %s" % (
-                    self.default_tz))
-        hour = self.data.get("%shour" % self.time_type, self.DEFAULT_HR)
+            raise PolicyValidationError(f"Invalid timezone specified {self.default_tz}")
+        hour = self.data.get(f"{self.time_type}hour", self.DEFAULT_HR)
         if hour not in self.parser.VALID_HOURS:
-            raise PolicyValidationError(
-                "Invalid hour specified %s" % (hour,))
+            raise PolicyValidationError(f"Invalid hour specified {hour}")
         if 'skip-days' in self.data and 'skip-days-from' in self.data:
             raise PolicyValidationError(
-                "Cannot specify two sets of skip days %s" % (
-                    self.data,))
+                f"Cannot specify two sets of skip days {self.data}"
+            )
+
         return self
 
     def process(self, resources, event=None):
@@ -370,7 +368,11 @@ class Time(Filter):
         # but unit testing is calling this direct.
         if self.id_key is None:
             self.id_key = (
-                self.manager is None and 'InstanceId' or self.manager.get_model().id)
+                'InstanceId'
+                if self.manager is None
+                else self.manager.get_model().id
+            )
+
 
         # The resource tag is not present, if we're not running in an opt-out
         # mode, we're done.
@@ -380,7 +382,7 @@ class Time(Filter):
             value = ""  # take the defaults
 
         # Resource opt out, track and record
-        if 'off' == value:
+        if value == 'off':
             self.opted_out.append(i)
             return False
         else:
@@ -432,9 +434,7 @@ class Time(Filter):
             self.skip_days = values.get_values()
         else:
             self.skip_days = self.data.get('skip-days', [])
-        if now_str in self.skip_days:
-            return False
-        return self.match(now, schedule)
+        return False if now_str in self.skip_days else self.match(now, schedule)
 
     def match(self, now, schedule):
         time = schedule.get(self.time_type, ())
@@ -463,8 +463,7 @@ class Time(Filter):
 
     @classmethod
     def get_tz(cls, tz):
-        found = cls.TZ_ALIASES.get(tz)
-        if found:
+        if found := cls.TZ_ALIASES.get(tz):
             return tzutil.gettz(found)
         return tzutil.gettz(tz.title())
 
@@ -482,9 +481,13 @@ class OffHour(Time):
     DEFAULT_HR = 19
 
     def get_default_schedule(self):
-        default = {'tz': self.default_tz, self.time_type: [
-            {'hour': self.data.get(
-                "%shour" % self.time_type, self.DEFAULT_HR)}]}
+        default = {
+            'tz': self.default_tz,
+            self.time_type: [
+                {'hour': self.data.get(f"{self.time_type}hour", self.DEFAULT_HR)}
+            ],
+        }
+
         if self.weekends_only:
             default[self.time_type][0]['days'] = [4]
         elif self.weekends:
@@ -504,9 +507,13 @@ class OnHour(Time):
     DEFAULT_HR = 7
 
     def get_default_schedule(self):
-        default = {'tz': self.default_tz, self.time_type: [
-            {'hour': self.data.get(
-                "%shour" % self.time_type, self.DEFAULT_HR)}]}
+        default = {
+            'tz': self.default_tz,
+            self.time_type: [
+                {'hour': self.data.get(f"{self.time_type}hour", self.DEFAULT_HR)}
+            ],
+        }
+
         if self.weekends_only:
             # turn on monday
             default[self.time_type][0]['days'] = [0]
@@ -586,7 +593,7 @@ class ScheduleParser:
         for piece in pieces:
             kv = piece.split('=')
             # components must by key=value
-            if not len(kv) == 2:
+            if len(kv) != 2:
                 continue
             key, value = kv
             data[key] = value
@@ -594,10 +601,10 @@ class ScheduleParser:
 
     def keys_are_valid(self, tag_value):
         """test that provided tag keys are valid"""
-        for key in ScheduleParser.raw_data(tag_value):
-            if key not in ('on', 'off', 'tz'):
-                return False
-        return True
+        return all(
+            key in ('on', 'off', 'tz')
+            for key in ScheduleParser.raw_data(tag_value)
+        )
 
     def parse(self, tag_value):
         # check the cache
@@ -613,7 +620,7 @@ class ScheduleParser:
         for piece in pieces:
             kv = piece.split('=')
             # components must by key=value
-            if not len(kv) == 2:
+            if len(kv) != 2:
                 return None
             key, value = kv
             if key != 'tz':
@@ -642,17 +649,17 @@ class ScheduleParser:
         for e in exprs:
             tokens = parens_removed(e).split(',')
             # custom hours must have two parts: (<days>, <hour>)
-            if not len(tokens) == 2:
+            if len(tokens) != 2:
                 return None
             if not tokens[1].isdigit():
                 return None
             hour = int(tokens[1])
             if hour not in self.VALID_HOURS:
                 return None
-            days = self.expand_day_range(tokens[0])
-            if not days:
+            if days := self.expand_day_range(tokens[0]):
+                parsed.append({'days': days, 'hour': hour})
+            else:
                 return None
-            parsed.append({'days': days, 'hour': hour})
         return parsed
 
     def expand_day_range(self, days):
@@ -661,7 +668,7 @@ class ScheduleParser:
             return [self.DAY_MAP[days]]
         day_range = [d for d in map(self.DAY_MAP.get, days.split('-'))
                      if d is not None]
-        if not len(day_range) == 2:
+        if len(day_range) != 2:
             return None
         # support wrap around days aka friday-monday = 4,5,6,0
         if day_range[0] > day_range[1]:

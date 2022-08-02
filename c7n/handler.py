@@ -138,7 +138,7 @@ init_env_globals()
 def dispatch_event(event, context):
     error = event.get('detail', {}).get('errorCode')
     if error and C7N_SKIP_EVTERR:
-        log.debug("Skipping failed operation: %s" % error)
+        log.debug(f"Skipping failed operation: {error}")
         return
 
     # one time initialization for cold starts.

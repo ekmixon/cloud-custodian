@@ -36,9 +36,7 @@ def remove_statements(match_ids, statements, matched=()):
         if s_found:
             found.append(s)
             statements.remove(s)
-    if not found:
-        return None, found
-    return statements, found
+    return (statements, found) if found else (None, found)
 
 
 class ModifyPolicyBase(BaseAction):
@@ -99,13 +97,13 @@ class ModifyPolicyBase(BaseAction):
     def add_statements(self, policy_statements):
         current = {s['Sid']: s for s in policy_statements}
         additional = {s['Sid']: s for s in self.data.get('add-statements', [])}
-        current.update(additional)
+        current |= additional
         return list(current.values()), bool(additional)
 
     def remove_statements(self, policy_statements, resource, matched_key):
         statement_ids = self.data.get('remove-statements', [])
-        found = []
         if len(statement_ids) == 0:
+            found = []
             return policy_statements, found
         resource_statements = resource.get(matched_key, ())
         return remove_statements(

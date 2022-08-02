@@ -23,20 +23,17 @@ class RelatedResourceFilter(ValueFilter):
     def validate(self):
         name = self.__class__.__name__
         if self.RelatedIdsExpression is None:
-            raise ValueError(
-                "%s Filter requires resource expression" % name)
+            raise ValueError(f"{name} Filter requires resource expression")
         # if self.AnnotationKey is None:
         #    raise ValueError(
         #        "%s Filter requires annotation key" % name)
 
         if self.RelatedResource is None:
-            raise ValueError(
-                "%s Filter requires resource manager spec" % name)
+            raise ValueError(f"{name} Filter requires resource manager spec")
         return super(RelatedResourceFilter, self).validate()
 
     def get_related_ids(self, resources):
-        return set(jmespath.search(
-            "[].%s" % self.RelatedIdsExpression, resources))
+        return set(jmespath.search(f"[].{self.RelatedIdsExpression}", resources))
 
     def get_related(self, resources):
         resource_manager = self.get_resource_manager()
@@ -100,7 +97,7 @@ class RelatedResourceFilter(ValueFilter):
 
     def _add_annotations(self, related_ids, resource):
         if self.AnnotationKey is not None:
-            akey = 'c7n:%s' % self.AnnotationKey
+            akey = f'c7n:{self.AnnotationKey}'
             resource[akey] = list(set(related_ids).union(resource.get(akey, [])))
 
     def process(self, resources, event=None):
@@ -122,8 +119,7 @@ class RelatedResourceByIdFilter(RelatedResourceFilter):
 
         related = {}
         for r in resource_manager.resources():
-            matched_vpc = self.get_related_by_ids(r) & related_ids
-            if matched_vpc:
+            if matched_vpc := self.get_related_by_ids(r) & related_ids:
                 for vpc in matched_vpc:
                     related_resources = related.get(vpc, [])
                     related_resources.append(r)
@@ -132,7 +128,7 @@ class RelatedResourceByIdFilter(RelatedResourceFilter):
 
     def get_related_by_ids(self, resources):
         RelatedResourceKey = self.RelatedResourceByIdExpression or self.RelatedIdsExpression
-        ids = jmespath.search("%s" % RelatedResourceKey, resources)
+        ids = jmespath.search(f"{RelatedResourceKey}", resources)
         if isinstance(ids, str):
             ids = [ids]
         return set(ids)
@@ -194,5 +190,5 @@ class ChildResourceFilter(RelatedResourceFilter):
     def _add_annotations(self, related_ids, resource):
         if self.AnnotationKey is not None:
             model = self.manager.get_model()
-            akey = 'c7n:%s' % self.AnnotationKey
+            akey = f'c7n:{self.AnnotationKey}'
             resource[akey] = self.child_resources.get(resource[model.id], [])

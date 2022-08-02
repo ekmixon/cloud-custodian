@@ -191,8 +191,11 @@ class DeleteTable(BaseAction):
         client = local_session(self.manager.session_factory).client('dynamodb')
 
         with self.executor_factory(max_workers=2) as w:
-            for table_set in chunks(resources, 20):
-                futures.append(w.submit(self.delete_table, client, table_set))
+            futures.extend(
+                w.submit(self.delete_table, client, table_set)
+                for table_set in chunks(resources, 20)
+            )
+
             for f in as_completed(futures):
                 if f.exception():
                     self.log.error(
@@ -239,7 +242,7 @@ class SetStream(BaseAction):
         stream_spec = {"StreamEnabled": state}
 
         if self.data.get('stream_view_type') is not None:
-            stream_spec.update({"StreamViewType": type})
+            stream_spec["StreamViewType"] = type
 
         c = local_session(self.manager.session_factory).client('dynamodb')
 
@@ -258,9 +261,9 @@ class SetStream(BaseAction):
 
             if self.data.get('stream_view_type') is not None:
                 stream_state = \
-                    f.result()['TableDescription']['StreamSpecification']['StreamEnabled']
+                        f.result()['TableDescription']['StreamSpecification']['StreamEnabled']
                 stream_type = \
-                    f.result()['TableDescription']['StreamSpecification']['StreamViewType']
+                        f.result()['TableDescription']['StreamSpecification']['StreamViewType']
 
                 t['c7n:StreamState'] = stream_state
                 t['c7n:StreamType'] = stream_type

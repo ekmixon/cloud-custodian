@@ -60,7 +60,6 @@ def import_resource_classes(resource_map, resource_types):
     if '*' in resource_types:
         resource_types = list(resource_map)
 
-    mod_map = {}
     rmods = set()
     not_found = set()
     found = []
@@ -72,9 +71,7 @@ def import_resource_classes(resource_map, resource_types):
         rmodule, rclass = resource_map[r].rsplit('.', 1)
         rmods.add(rmodule)
 
-    for rmodule in rmods:
-        mod_map[rmodule] = importlib.import_module(rmodule)
-
+    mod_map = {rmodule: importlib.import_module(rmodule) for rmodule in rmods}
     for rtype in resource_types:
         if rtype in not_found:
             continue
@@ -97,7 +94,7 @@ def resources(cloud_provider=None):
         if cloud_provider and cname != cloud_provider:
             continue
         for rname, rtype in ctype.resources.items():
-            results['%s.%s' % (cname, rname)] = rtype
+            results[f'{cname}.{rname}'] = rtype
     return results
 
 
@@ -106,16 +103,14 @@ def get_resource_class(resource_type):
         provider_name, resource = resource_type.split('.', 1)
     else:
         provider_name, resource = 'aws', resource_type
-        resource_type = '%s.%s' % (provider_name, resource_type)
+        resource_type = f'{provider_name}.{resource_type}'
 
     provider = clouds.get(provider_name)
     if provider is None:
-        raise KeyError(
-            "Invalid cloud provider: %s" % provider_name)
+        raise KeyError(f"Invalid cloud provider: {provider_name}")
 
     if resource_type not in provider.resource_map:
-        raise KeyError("Invalid resource: %s for provider: %s" % (
-            resource, provider_name))
+        raise KeyError(f"Invalid resource: {resource} for provider: {provider_name}")
     factory = provider.resources.get(resource)
-    assert factory, "Resource:%s not loaded" % resource_type
+    assert factory, f"Resource:{resource_type} not loaded"
     return factory

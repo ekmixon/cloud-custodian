@@ -100,11 +100,11 @@ class PolicyLoader:
         for p in policy_data.get('policies', ()):
             pr = p['resource']
             if '.' not in pr:
-                pr = "aws.%s" % pr
+                pr = f"aws.{pr}"
             if pr in missing:
                 raise PolicyValidationError(
-                    "Policy:%s references an unknown resource:%s" % (
-                        p['name'], p['resource']))
+                    f"Policy:{p['name']} references an unknown resource:{p['resource']}"
+                )
 
     def load_data(self, policy_data, file_uri, validate=None,
                   session_factory=None, config=None):
@@ -116,21 +116,16 @@ class PolicyLoader:
         # track policy resource types and only load if needed.
         rtypes = set(self.structure.get_resource_types(policy_data))
 
-        missing = load_resources(list(rtypes))
-        if missing:
+        if missing := load_resources(list(rtypes)):
             self._handle_missing_resources(policy_data, missing)
 
         if schema and (validate is not False or (
                 validate is None and
                 self.default_schema_validate)):
-            errors = self.validator.validate(policy_data, tuple(rtypes))
-            if errors:
+            if errors := self.validator.validate(policy_data, tuple(rtypes)):
                 raise PolicyValidationError(
                     "Failed to validate policy %s\n %s\n" % (
                         errors[1], errors[0]))
-
-        collection = self.collection_class.from_data(
-            policy_data, config, session_factory)
 
         # non schema validation of policies isnt optional its
         # become a lazy initialization point for resources.
@@ -141,7 +136,9 @@ class PolicyLoader:
         #
         # ie we should defer this to callers
         # [p.validate() for p in collection]
-        return collection
+        return self.collection_class.from_data(
+            policy_data, config, session_factory
+        )
 
 
 class SourceLocator:
@@ -164,6 +161,5 @@ class SourceLocator:
         r = re.compile(r'^\s+(-\s+)?name: ([\w-]+)\s*$')
         with open(self.filename) as f:
             for i, line in enumerate(f, 1):
-                m = r.search(line)
-                if m:
-                    self.policies[m.group(2)] = i
+                if m := r.search(line):
+                    self.policies[m[2]] = i

@@ -157,8 +157,8 @@ class DefinitionDeregister(BaseAction):
 
     def deregister_definition(self, r):
         self.client.deregister_job_definition(
-            jobDefinition='%s:%s' % (r['jobDefinitionName'],
-                                     r['revision']))
+            jobDefinition=f"{r['jobDefinitionName']}:{r['revision']}"
+        )
 
     def process(self, resources):
         resources = self.filter_resources(resources, 'status', self.valid_origin_states)

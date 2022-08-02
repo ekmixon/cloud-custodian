@@ -28,9 +28,7 @@ class Kafka(QueryResourceManager):
         for r in resources:
             if 'Tags' not in r:
                 continue
-            tags = []
-            for k, v in r['Tags'].items():
-                tags.append({'Key': k, 'Value': v})
+            tags = [{'Key': k, 'Value': v} for k, v in r['Tags'].items()]
             r['Tags'] = tags
         return resources
 

@@ -122,11 +122,11 @@ class ElasticSearchCrossAccountAccessFilter(CrossAccountAccessFilter):
         client = local_session(self.manager.session_factory).client('es')
         for r in resources:
             if self.policy_attribute not in r:
-                result = self.manager.retry(
+                if result := self.manager.retry(
                     client.describe_elasticsearch_domain_config,
                     DomainName=r['DomainName'],
-                    ignore_err_codes=('ResourceNotFoundException',))
-                if result:
+                    ignore_err_codes=('ResourceNotFoundException',),
+                ):
                     r[self.policy_attribute] = json.loads(
                         result.get('DomainConfig').get('AccessPolicies').get('Options')
                     )

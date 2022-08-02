@@ -216,7 +216,7 @@ class WafEnabled(Filter):
         # generally frown on runtime validation errors, but also frown on
         # api calls during validation.
         if target_acl and target_acl_id not in name_id_map.values():
-            raise ValueError("Invalid target acl:%s, acl not found" % target_acl)
+            raise ValueError(f"Invalid target acl:{target_acl}, acl not found")
 
         arn_key = self.manager.resource_type.id
 
@@ -232,9 +232,7 @@ class WafEnabled(Filter):
                 if r_acl == target_acl_id:
                     state_map[arn] = True
                     continue
-                state_map[arn] = False
-            else:
-                state_map[arn] = False
+            state_map[arn] = False
         return [r for r in resources if state_map[r[arn_key]] == state]
 
 
@@ -275,10 +273,10 @@ class WafV2Enabled(Filter):
         state_map = {}
         for r in resources:
             arn = r[arn_key]
+            # NLB doesn't support WAF. So, skip NLB resources
+            if r['Type'] == 'network':
+                continue
             if arn in resource_map:
-                # NLB doesn't support WAF. So, skip NLB resources
-                if r['Type'] == 'network':
-                    continue
                 r['c7n_webacl'] = resource_map[arn]
                 if not target_acl:
                     state_map[arn] = True
@@ -287,12 +285,7 @@ class WafV2Enabled(Filter):
                 if r_acl == target_acl_id:
                     state_map[arn] = True
                     continue
-                state_map[arn] = False
-            else:
-                # NLB doesn't support WAF. So, skip NLB resources
-                if r['Type'] == 'network':
-                    continue
-                state_map[arn] = False
+            state_map[arn] = False
         return [r for r in resources if r[arn_key] in state_map and state_map[r[arn_key]] == state]
 
 
@@ -310,16 +303,13 @@ class SetWaf(BaseAction):
             'state': {'type': 'boolean'}})
 
     def validate(self):
-        found = False
-        for f in self.manager.iter_filters():
-            if isinstance(f, WafEnabled):
-                found = True
-                break
+        found = any(isinstance(f, WafEnabled) for f in self.manager.iter_filters())
         if not found:
             # try to ensure idempotent usage
             raise PolicyValidationError(
-                "set-waf should be used in conjunction with waf-enabled filter on %s" % (
-                    self.manager.data,))
+                f"set-waf should be used in conjunction with waf-enabled filter on {self.manager.data}"
+            )
+
         return self
 
     def process(self, resources):
@@ -330,7 +320,7 @@ class SetWaf(BaseAction):
         state = self.data.get('state', True)
 
         if state and target_acl_id not in name_id_map.values():
-            raise ValueError("invalid web acl: %s" % (target_acl_id))
+            raise ValueError(f"invalid web acl: {target_acl_id}")
 
         client = local_session(
             self.manager.session_factory).client('waf-regional')
@@ -361,16 +351,13 @@ class SetWafV2(BaseAction):
             'state': {'type': 'boolean'}})
 
     def validate(self):
-        found = False
-        for f in self.manager.iter_filters():
-            if isinstance(f, WafV2Enabled):
-                found = True
-                break
+        found = any(isinstance(f, WafV2Enabled) for f in self.manager.iter_filters())
         if not found:
             # try to ensure idempotent usage
             raise PolicyValidationError(
-                "set-wafv2 should be used in conjunction with wafv2-enabled filter on %s" % (
-                    self.manager.data,))
+                f"set-wafv2 should be used in conjunction with wafv2-enabled filter on {self.manager.data}"
+            )
+
         return self
 
     def process(self, resources):
@@ -381,7 +368,7 @@ class SetWafV2(BaseAction):
         state = self.data.get('state', True)
 
         if state and target_acl_id not in name_id_map.values():
-            raise ValueError("invalid web acl: %s" % (target_acl_id))
+            raise ValueError(f"invalid web acl: {target_acl_id}")
 
         client = local_session(
             self.manager.session_factory).client('wafv2')
@@ -428,11 +415,12 @@ class SetS3Logging(BaseAction):
     permissions = ("elasticloadbalancing:ModifyLoadBalancerAttributes",)
 
     def validate(self):
-        if self.data.get('state') == 'enabled':
-            if 'bucket' not in self.data or 'prefix' not in self.data:
-                raise PolicyValidationError((
-                    "alb logging enablement requires `bucket` "
-                    "and `prefix` specification on %s" % (self.manager.data,)))
+        if self.data.get('state') == 'enabled' and (
+            'bucket' not in self.data or 'prefix' not in self.data
+        ):
+            raise PolicyValidationError((
+                "alb logging enablement requires `bucket` "
+                "and `prefix` specification on %s" % (self.manager.data,)))
         return self
 
     def process(self, resources):
@@ -886,15 +874,16 @@ class AppELBListenerFilter(ValueFilter, AppELBListenerFilterBase):
         if not self.data.get('matched'):
             return
         listeners = list(self.manager.iter_filters())
-        found = False
-        for f in listeners[:listeners.index(self)]:
-            if not f.data.get('matched', False):
-                found = True
-                break
+        found = any(
+            not f.data.get('matched', False)
+            for f in listeners[: listeners.index(self)]
+        )
+
         if not found:
             raise PolicyValidationError(
-                "matched listener filter, requires preceding listener filter on %s " % (
-                    self.manager.data,))
+                f"matched listener filter, requires preceding listener filter on {self.manager.data} "
+            )
+
         return self
 
     def process(self, albs, event=None):
@@ -952,8 +941,8 @@ class AppELBModifyListenerPolicy(BaseAction):
             if f.type == 'listener':
                 return self
         raise PolicyValidationError(
-            "modify-listener action requires the listener filter %s" % (
-                self.manager.data,))
+            f"modify-listener action requires the listener filter {self.manager.data}"
+        )
 
     def process(self, load_balancers):
         args = {}

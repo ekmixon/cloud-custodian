@@ -49,11 +49,8 @@ class VarsSubstitutionError(Exception):
 
 def load_file(path, format=None, vars=None):
     if format is None:
-        format = 'yaml'
         _, ext = os.path.splitext(path)
-        if ext[1:] == 'json':
-            format = 'json'
-
+        format = 'json' if ext[1:] == 'json' else 'yaml'
     with open(path) as fh:
         contents = fh.read()
 
@@ -64,13 +61,13 @@ def load_file(path, format=None, vars=None):
                 msg = 'Failed to substitute variable by positional argument.'
                 raise VarsSubstitutionError(msg)
             except KeyError as e:
-                msg = 'Failed to substitute variables.  KeyError on {}'.format(str(e))
+                msg = f'Failed to substitute variables.  KeyError on {str(e)}'
                 raise VarsSubstitutionError(msg)
 
-        if format == 'yaml':
-            return yaml_load(contents)
-        elif format == 'json':
+        if format == 'json':
             return loads(contents)
+        elif format == 'yaml':
+            return yaml_load(contents)
 
 
 def yaml_load(value):
@@ -126,10 +123,7 @@ def parse_date(v, tz=None):
     tz = tz or tzutc()
 
     if isinstance(v, datetime):
-        if v.tzinfo is None:
-            return v.astimezone(tz)
-        return v
-
+        return v.astimezone(tz) if v.tzinfo is None else v
     if isinstance(v, str) and not v.isdigit():
         try:
             return parse(v).astimezone(tz)
@@ -171,12 +165,9 @@ def type_schema(
      - required: list of required properties, by default 'type' is required
      - props: additional key value properties
     """
+    type_names = [type_name]
     if aliases:
-        type_names = [type_name]
         type_names.extend(aliases)
-    else:
-        type_names = [type_name]
-
     if rinherit:
         s = copy.deepcopy(rinherit)
         s['properties']['type'] = {'enum': type_names}
@@ -257,10 +248,7 @@ def camelResource(obj, implicitDate=False, implicitTitle=True):
         return obj
     for k in list(obj.keys()):
         v = obj.pop(k)
-        if implicitTitle:
-            ok = "%s%s" % (k[0].upper(), k[1:])
-        else:
-            ok = k
+        ok = f"{k[0].upper()}{k[1:]}" if implicitTitle else k
         obj[ok] = v
 
         if implicitDate:
@@ -314,9 +302,7 @@ CONN_CACHE = threading.local()
 
 def local_session(factory, region=None):
     """Cache a session thread local for up to 45m"""
-    factory_region = getattr(factory, 'region', 'global')
-    if region:
-        factory_region = region
+    factory_region = region or getattr(factory, 'region', 'global')
     s = getattr(CONN_CACHE, factory_region, {}).get('session')
     t = getattr(CONN_CACHE, factory_region, {}).get('time')
 
@@ -367,10 +353,7 @@ def parse_s3(s3_path):
         ridx = None
     bucket = s3_path[5:ridx]
     s3_path = s3_path.rstrip('/')
-    if ridx is None:
-        key_prefix = ""
-    else:
-        key_prefix = s3_path[s3_path.find('/', 5):]
+    key_prefix = "" if ridx is None else s3_path[s3_path.find('/', 5):]
     return s3_path, bucket, key_prefix
 
 
@@ -398,12 +381,11 @@ def generate_arn(
         partition = REGION_PARTITION_MAP[region]
     if service == 's3':
         region = ''
-    arn = 'arn:%s:%s:%s:%s:' % (
-        partition, service, region if region else '', account_id if account_id else '')
+    arn = f"arn:{partition}:{service}:{region or ''}:{account_id or ''}:"
     if resource_type:
         if resource.startswith(separator):
             separator = ''
-        arn = arn + '%s%s%s' % (resource_type, separator, resource)
+        arn = arn + f'{resource_type}{separator}{resource}'
     else:
         arn = arn + resource
     return arn
@@ -413,7 +395,7 @@ def snapshot_identifier(prefix, db_identifier):
     """Return an identifier for a snapshot of a database or cluster.
     """
     now = datetime.now()
-    return '%s-%s-%s' % (prefix, db_identifier, now.strftime('%Y-%m-%d-%H-%M'))
+    return f"{prefix}-{db_identifier}-{now.strftime('%Y-%m-%d-%H-%M')}"
 
 
 retry_log = logging.getLogger('c7n.retry')
@@ -515,7 +497,7 @@ class IPv4Network(ipaddress.IPv4Network):
 def reformat_schema(model):
     """ Reformat schema to be in a more displayable format. """
     if not hasattr(model, 'schema'):
-        return "Model '{}' does not have a schema".format(model)
+        return f"Model '{model}' does not have a schema"
 
     if 'properties' not in model.schema:
         return "Schema in unexpected format."
@@ -570,14 +552,14 @@ def format_string_values(obj, err_fallback=(IndexError, KeyError), *args, **kwar
     Return the updated object
     """
     if isinstance(obj, dict):
-        new = {}
-        for key in obj.keys():
-            new[key] = format_string_values(obj[key], *args, **kwargs)
+        new = {
+            key: format_string_values(obj[key], *args, **kwargs)
+            for key in obj.keys()
+        }
+
         return new
     elif isinstance(obj, list):
-        new = []
-        for item in obj:
-            new.append(format_string_values(item, *args, **kwargs))
+        new = [format_string_values(item, *args, **kwargs) for item in obj]
         return new
     elif isinstance(obj, str):
         try:
@@ -606,31 +588,30 @@ def get_proxy_url(url):
     parsed = urlparse.urlparse(url)
 
     proxy_keys = [
-        parsed.scheme + '://' + parsed.netloc,
+        f'{parsed.scheme}://{parsed.netloc}',
         parsed.scheme,
-        'all://' + parsed.netloc,
-        'all'
+        f'all://{parsed.netloc}',
+        'all',
     ]
+
 
     # Set port if not defined explicitly in url.
     port = parsed.port
-    if port is None and parsed.scheme == 'http':
-        port = 80
-    elif port is None and parsed.scheme == 'https':
-        port = 443
+    if parsed.scheme == 'http':
+        if port is None:
+            port = 80
+    elif parsed.scheme == 'https':
+        if port is None:
+            port = 443
 
     hostname = parsed.hostname is not None and parsed.hostname or ''
 
     # Determine if proxy should be used based on no_proxy entries.
     # Note this does not support no_proxy ip or cidr entries.
-    if proxy_bypass("%s:%s" % (hostname, port)):
+    if proxy_bypass(f"{hostname}:{port}"):
         return None
 
-    for key in proxy_keys:
-        if key in proxies:
-            return proxies[key]
-
-    return None
+    return next((proxies[key] for key in proxy_keys if key in proxies), None)
 
 
 class FormatDate:
@@ -681,32 +662,35 @@ class QueryParser:
         filters = []
         if not isinstance(data, (tuple, list)):
             raise PolicyValidationError(
-                "%s Query invalid format, must be array of dicts %s" % (
-                    cls.type_name,
-                    data))
+                f"{cls.type_name} Query invalid format, must be array of dicts {data}"
+            )
+
         for d in data:
             if not isinstance(d, dict):
-                raise PolicyValidationError(
-                    "%s Query Filter Invalid %s" % (cls.type_name, data))
+                raise PolicyValidationError(f"{cls.type_name} Query Filter Invalid {data}")
             if "Name" not in d or cls.value_key not in d:
                 raise PolicyValidationError(
-                    "%s Query Filter Invalid: Missing Key or Values in %s" % (
-                        cls.type_name, data))
+                    f"{cls.type_name} Query Filter Invalid: Missing Key or Values in {data}"
+                )
+
 
             key = d['Name']
             values = d[cls.value_key]
 
-            if not cls.multi_value and isinstance(values, list):
-                raise PolicyValidationError(
-                    "%s Query Filter Invalid Key: Value:%s Must be single valued" % (
-                        cls.type_name, key))
-            elif not cls.multi_value:
-                values = [values]
+            if not cls.multi_value:
+                if isinstance(values, list):
+                    raise PolicyValidationError(
+                        f"{cls.type_name} Query Filter Invalid Key: Value:{key} Must be single valued"
+                    )
+
+                else:
+                    values = [values]
 
             if key not in cls.QuerySchema and not key.startswith('tag:'):
                 raise PolicyValidationError(
-                    "%s Query Filter Invalid Key:%s Valid: %s" % (
-                        cls.type_name, key, ", ".join(cls.QuerySchema.keys())))
+                    f'{cls.type_name} Query Filter Invalid Key:{key} Valid: {", ".join(cls.QuerySchema.keys())}'
+                )
+
 
             vtype = cls.QuerySchema.get(key)
             if vtype is None and key.startswith('tag'):
@@ -714,19 +698,22 @@ class QueryParser:
 
             if not isinstance(values, list):
                 raise PolicyValidationError(
-                    "%s Query Filter Invalid Values, must be array %s" % (
-                        cls.type_name, data,))
+                    f"{cls.type_name} Query Filter Invalid Values, must be array {data}"
+                )
+
 
             for v in values:
                 if isinstance(vtype, tuple):
                     if v not in vtype:
                         raise PolicyValidationError(
-                            "%s Query Filter Invalid Value: %s Valid: %s" % (
-                                cls.type_name, v, ", ".join(vtype)))
+                            f'{cls.type_name} Query Filter Invalid Value: {v} Valid: {", ".join(vtype)}'
+                        )
+
                 elif not isinstance(v, vtype):
                     raise PolicyValidationError(
-                        "%s Query Filter Invalid Value Type %s" % (
-                            cls.type_name, data,))
+                        f"{cls.type_name} Query Filter Invalid Value Type {data}"
+                    )
+
 
             filters.append(d)
 
@@ -734,7 +721,7 @@ class QueryParser:
 
 
 def get_annotation_prefix(s):
-    return 'c7n:{}'.format(s)
+    return f'c7n:{s}'
 
 
 def merge_dict_list(dict_iter):
@@ -744,7 +731,7 @@ def merge_dict_list(dict_iter):
     """
     result = {}
     for d in dict_iter:
-        result.update(d)
+        result |= d
     return result
 
 
@@ -767,10 +754,7 @@ def merge_dict(a, b):
 
 
 def select_keys(d, keys):
-    result = {}
-    for k in keys:
-        result[k] = d.get(k)
-    return result
+    return {k: d.get(k) for k in keys}
 
 
 def get_human_size(size, precision=2):

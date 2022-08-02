@@ -68,18 +68,16 @@ class DescribeKey(DescribeSource):
                     key_detail = client.describe_key(KeyId=key_arn)['KeyMetadata']
                     r.update(key_detail)
                 except ClientError as e:
-                    if e.response['Error']['Code'] == 'AccessDeniedException':
-                        self.manager.log.warning(
-                            "Access denied when describing key:%s",
-                            key_id)
-                        # If a describe fails, we still want the `Arn` key
-                        # available since it is a core attribute
-                        r['Arn'] = r['KeyArn']
-                    else:
+                    if e.response['Error']['Code'] != 'AccessDeniedException':
                         raise
 
-            alias_names = self.manager.alias_map.get(key_id)
-            if alias_names:
+                    self.manager.log.warning(
+                        "Access denied when describing key:%s",
+                        key_id)
+                    # If a describe fails, we still want the `Arn` key
+                    # available since it is a core attribute
+                    r['Arn'] = r['KeyArn']
+            if alias_names := self.manager.alias_map.get(key_id):
                 r['AliasNames'] = alias_names
 
         return universal_augment(self.manager, resources)
@@ -89,8 +87,9 @@ class ConfigKey(ConfigSource):
 
     def load_resource(self, item):
         resource = super().load_resource(item)
-        alias_names = self.manager.alias_map.get(resource[self.manager.resource_type.id])
-        if alias_names:
+        if alias_names := self.manager.alias_map.get(
+            resource[self.manager.resource_type.id]
+        ):
             resource['AliasNames'] = alias_names
         return resource
 
@@ -199,7 +198,7 @@ class KMSCrossAccountAccessFilter(CrossAccountAccessFilter):
 
         def _augment(r):
             key_id = r.get('TargetKeyId', r.get('KeyId'))
-            assert key_id, "Invalid key resources %s" % r
+            assert key_id, f"Invalid key resources {r}"
             r['Policy'] = client.get_key_policy(
                 KeyId=key_id, PolicyName='default')['Policy']
             return r
@@ -236,17 +235,16 @@ class GrantCount(Filter):
 
     def process(self, keys, event=None):
         client = local_session(self.manager.session_factory).client('kms')
-        results = []
-        for k in keys:
-            results.append(self.process_key(client, k))
+        results = [self.process_key(client, k) for k in keys]
         return [r for r in results if r]
 
     def process_key(self, client, key):
         p = client.get_paginator('list_grants')
         p.PAGE_ITERATOR_CLS = RetryPageIterator
-        grant_count = 0
-        for rp in p.paginate(KeyId=key['TargetKeyId']):
-            grant_count += len(rp['Grants'])
+        grant_count = sum(
+            len(rp['Grants']) for rp in p.paginate(KeyId=key['TargetKeyId'])
+        )
+
         key['GrantCount'] = grant_count
 
         grant_threshold = self.data.get('min', 5)
@@ -308,7 +306,7 @@ class RemovePolicyStatement(RemovePolicyBase):
         client = local_session(self.manager.session_factory).client('kms')
         for r in resources:
             key_id = r.get('TargetKeyId', r.get('KeyId'))
-            assert key_id, "Invalid key resources %s" % r
+            assert key_id, f"Invalid key resources {r}"
             try:
                 results += filter(None, [self.process_resource(client, r, key_id)])
             except Exception:

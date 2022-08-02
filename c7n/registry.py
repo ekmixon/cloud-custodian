@@ -88,9 +88,7 @@ class PluginRegistry:
         return len(self._factories)
 
     def get(self, name):
-        factory = self._factories.get(name)
-
-        if factory:
+        if factory := self._factories.get(name):
             return factory
 
         return next((v for k, v in self._factories.items()

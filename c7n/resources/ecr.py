@@ -53,7 +53,7 @@ class ECRImageQuery(ChildResourceQuery):
         m = self.resolve(resource_manager.resource_type)
         params = {}
         resources = self.filter(resource_manager, **params)
-        resources = [r for r in resources if "{}/{}".format(r[0], r[1][m.id]) in identities]
+        resources = [r for r in resources if f"{r[0]}/{r[1][m.id]}" in identities]
 
         return resources
 
@@ -74,7 +74,7 @@ class RepositoryImageDescribeSource(ChildDescribeSource):
         for repositoryName, image in resources:
             repoArn = client.describe_repositories(
                 repositoryNames=[repositoryName])['repositories'][0]['repositoryArn']
-            imageArn = "{}/{}".format(repoArn, image["imageDigest"])
+            imageArn = f'{repoArn}/{image["imageDigest"]}'
             image["imageArn"] = imageArn
             results.append(image)
         return results
@@ -193,9 +193,7 @@ class ModifyPolicyStatement(ModifyPolicyBase):
                 for statement in new_policy:
                     if "Resource" in statement:
                         del statement["Resource"]
-                        cleaned.append(statement)
-                    else:
-                        cleaned.append(statement)
+                    cleaned.append(statement)
                 policy['Statement'] = cleaned
                 client.set_repository_policy(
                     repositoryName=r['repositoryName'],
@@ -358,21 +356,20 @@ def lifecycle_rule_validate(policy, rule):
     if (rule['selection']['tagStatus'] == 'tagged' and
             'tagPrefixList' not in rule['selection']):
         raise PolicyValidationError(
-            ("{} has invalid lifecycle rule {} tagPrefixList "
-             "required for tagStatus: tagged").format(
-                 policy.name, rule))
+            f"{policy.name} has invalid lifecycle rule {rule} tagPrefixList required for tagStatus: tagged"
+        )
+
     if (rule['selection']['countType'] == 'sinceImagePushed' and
             'countUnit' not in rule['selection']):
         raise PolicyValidationError(
-            ("{} has invalid lifecycle rule {} countUnit "
-             "required for countType: sinceImagePushed").format(
-                 policy.name, rule))
+            f"{policy.name} has invalid lifecycle rule {rule} countUnit required for countType: sinceImagePushed"
+        )
+
     if (rule['selection']['countType'] == 'imageCountMoreThan' and
             'countUnit' in rule['selection']):
         raise PolicyValidationError(
-            ("{} has invalid lifecycle rule {} countUnit "
-             "invalid for countType: imageCountMoreThan").format(
-                 policy.name, rule))
+            f"{policy.name} has invalid lifecycle rule {rule} countUnit invalid for countType: imageCountMoreThan"
+        )
 
 
 @ECR.filter_registry.register('lifecycle-rule')

@@ -119,9 +119,7 @@ class SetProtection(BaseAction):
         client = local_session(self.manager.session_factory).client('cloudformation')
 
         with self.executor_factory(max_workers=3) as w:
-            futures = {}
-            for s in stacks:
-                futures[w.submit(self.process_stacks, client, s)] = s
+            futures = {w.submit(self.process_stacks, client, s): s for s in stacks}
             for f in as_completed(futures):
                 s = futures[f]
                 if f.exception():
@@ -174,18 +172,13 @@ def _tag_stack(client, s, add=(), remove=()):
     for t in add:
         tags[t['Key']] = t['Value']
 
-    params = []
-    for p in s.get('Parameters', []):
-        params.append({'ParameterKey': p['ParameterKey'], 'UsePreviousValue': True})
+    params = [
+        {'ParameterKey': p['ParameterKey'], 'UsePreviousValue': True}
+        for p in s.get('Parameters', [])
+    ]
 
-    capabilities = []
-    for c in s.get('Capabilities', []):
-        capabilities.append(c)
-
-    notifications = []
-    for n in s.get('NotificationArns', []):
-        notifications.append(n)
-
+    capabilities = list(s.get('Capabilities', []))
+    notifications = list(s.get('NotificationArns', []))
     client.update_stack(
         StackName=s['StackName'],
         UsePreviousTemplate=True,

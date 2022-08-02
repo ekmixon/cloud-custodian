@@ -51,7 +51,7 @@ class CustodianTestCore:
         Input a dictionary and a format. Valid formats are `yaml` and `json`
         Returns the file path.
         """
-        fh = tempfile.NamedTemporaryFile(mode="w+b", suffix="." + format, delete=False)
+        fh = tempfile.NamedTemporaryFile(mode="w+b", suffix=f".{format}", delete=False)
         if format == "json":
             fh.write(json.dumps(policy).encode("utf8"))
         else:
@@ -72,10 +72,11 @@ class CustodianTestCore:
         if config is None:
             self.context_output_dir = self.get_temp_dir()
             config = Config.empty(output_dir=self.context_output_dir)
-        ctx = ExecutionContext(
-            session_factory, policy or Bag({
-                "name": "test-policy", "provider_name": "aws"}), config)
-        return ctx
+        return ExecutionContext(
+            session_factory,
+            policy or Bag({"name": "test-policy", "provider_name": "aws"}),
+            config,
+        )
 
     def load_policy(
             self,
@@ -103,15 +104,14 @@ class CustodianTestCore:
         [p.validate() for p in collection]
         if not allow_deprecations:
             for p in collection:
-                r = deprecated.Report(p)
-                if r:
+                if r := deprecated.Report(p):
                     raise DeprecationError(
                         f"policy {p.name} contains deprecated usage\n{r.format()}")
         return list(collection)[0]
 
     def _get_policy_config(self, **kw):
         config = kw
-        if kw.get('output_dir') is None or config.get('cache'):
+        if config.get('output_dir') is None or config.get('cache'):
             config["output_dir"] = temp_dir = self.get_temp_dir()
         if config.get('cache'):
             config["cache"] = os.path.join(temp_dir, "c7n.cache")
@@ -120,10 +120,7 @@ class CustodianTestCore:
 
     def load_policy_set(self, data, config=None):
         filename = self.write_policy_file(data, format="json")
-        if config:
-            e = Config.empty(**config)
-        else:
-            e = Config.empty()
+        e = Config.empty(**config) if config else Config.empty()
         return policy.load(e, filename)
 
     def patch(self, obj, attr, new):
@@ -271,11 +268,15 @@ real_datetime_class = datetime.datetime
 
 def mock_datetime_now(tgt, dt):
 
+
+
+
     class DatetimeSubclassMeta(type):
 
         @classmethod
-        def __instancecheck__(mcs, obj):
+        def __instancecheck__(cls, obj):
             return isinstance(obj, real_datetime_class)
+
 
     class BaseMockedDatetime(real_datetime_class):
         target = tgt
