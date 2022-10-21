@@ -60,7 +60,7 @@ azure-storage-blob==12.12.0; python_version >= "3.6"
 azure-storage-common==2.1.0
 azure-storage-file-share==12.8.0; python_version >= "3.6"
 azure-storage-file==2.1.0
-azure-storage-queue==12.3.0; python_version >= "3.6"
+azure-storage-queue==12.4.0; python_version >= "3.6"
 backports.zoneinfo==0.2.1; python_version >= "3.6" and python_full_version < "3.0.0" and python_version < "3.9" and (python_version >= "3.6" and python_full_version < "3.0.0" or python_full_version >= "3.6.0" and python_version < "4" and python_version >= "3.6") or python_full_version >= "3.5.0" and python_version < "3.9" and python_version >= "3.6" and (python_version >= "3.6" and python_full_version < "3.0.0" or python_full_version >= "3.6.0" and python_version < "4" and python_version >= "3.6")
 certifi==2022.6.15; python_version >= "3.7" and python_version < "4"
 cffi==1.15.0; python_version >= "3.6"
@@ -78,7 +78,7 @@ msal==1.18.0; python_version >= "3.6"
 msrest==0.7.1; python_version >= "3.6"
 msrestazure==0.6.4
 netaddr==0.7.20
-oauthlib==3.2.0; python_version >= "3.6" and python_full_version < "3.0.0" or python_full_version >= "3.4.0" and python_version >= "3.6"
+oauthlib==3.2.1; python_version >= "3.6" and python_full_version < "3.0.0" or python_full_version >= "3.4.0" and python_version >= "3.6"
 portalocker==2.4.0
 pycparser==2.21; python_version >= "3.6" and python_full_version < "3.0.0" or python_version >= "3.6" and python_full_version >= "3.4.0"
 pyjwt==2.4.0; python_version >= "3.6"
