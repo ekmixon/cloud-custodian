@@ -78,7 +78,7 @@ msal==1.18.0; python_version >= "3.6"
 msrest==0.7.1; python_version >= "3.6"
 msrestazure==0.6.4
 netaddr==0.7.20
-oauthlib==3.2.0; python_version >= "3.6" and python_full_version < "3.0.0" or python_full_version >= "3.4.0" and python_version >= "3.6"
+oauthlib==3.2.1; python_version >= "3.6" and python_full_version < "3.0.0" or python_full_version >= "3.4.0" and python_version >= "3.6"
 portalocker==2.4.0
 pycparser==2.21; python_version >= "3.6" and python_full_version < "3.0.0" or python_version >= "3.6" and python_full_version >= "3.4.0"
 pyjwt==2.4.0; python_version >= "3.6"
@@ -94,3 +94,4 @@ tzdata==2022.1; python_version >= "3.6" and python_full_version < "3.0.0" and pl
 tzlocal==4.2; python_version >= "3.6" and python_full_version < "3.0.0" or python_full_version >= "3.5.0" and python_version < "4" and python_version >= "3.6"
 urllib3==1.26.9; python_version >= "3.7" and python_full_version < "3.0.0" and python_version < "4" or python_full_version >= "3.5.0" and python_version < "4" and python_version >= "3.7"
 zipp==3.8.0; python_version < "3.8" and python_version >= "3.7"
+setuptools>=65.5.1 # not directly required, pinned by Snyk to avoid a vulnerability
