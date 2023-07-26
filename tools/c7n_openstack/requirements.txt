@@ -1,5 +1,5 @@
 appdirs==1.4.4; python_version >= "3.6"
-certifi==2022.6.15; python_version >= "3.7" and python_version < "4"
+certifi==2023.7.22; python_version >= "3.7" and python_version < "4"
 cffi==1.15.0; python_version >= "3.6"
 charset-normalizer==2.0.12; python_version >= "3.7" and python_version < "4" and python_full_version >= "3.5.0"
 cryptography==37.0.2; python_version >= "3.6"
