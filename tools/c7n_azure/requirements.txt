@@ -8,7 +8,7 @@ azure-cosmosdb-nspkg==2.0.2
 azure-cosmosdb-table==1.0.6
 azure-functions==1.11.2; python_version >= "3" and python_version < "4"
 azure-graphrbac==0.61.1
-azure-identity==1.10.0; python_version >= "3.6"
+azure-identity==1.16.1; python_version >= "3.6"
 azure-keyvault-certificates==4.4.0; python_version >= "3.6"
 azure-keyvault-keys==4.5.1; python_version >= "3.6"
 azure-keyvault-secrets==4.4.0; python_version >= "3.6"
